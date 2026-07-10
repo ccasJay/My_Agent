@@ -6,13 +6,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(nlohmann_json CONFIG REQUIRED)
+
 add_library(swe_agent_model
-    src/openai_compatible_client.cpp
+    src/model_client.cpp
 )
 
 target_include_directories(swe_agent_model
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+target_link_libraries(swe_agent_model PUBLIC nlohmann_json::nlohmann_json)
 
 target_compile_options(swe_agent_model PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
