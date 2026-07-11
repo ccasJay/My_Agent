@@ -1,21 +1,8 @@
 #include "http/http_client.hpp"
 #include "model/model_client.hpp"
-#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
-
-namespace {
-
-std::string get_required_env(const std::string& name) {
-    const char* value = std::getenv(name.c_str());
-    if (value == nullptr) {
-        throw std::runtime_error{"Missing environment variable: " + name};
-    }
-    return std::string{value};
-}
-
-}  // namespace
 
 namespace swe_agent::model {
 
@@ -24,16 +11,7 @@ ModelResponse OpenaiCompatible::query(const MSG& messages) {
         return ModelResponse{"Messages are empty"};
     }
 
-    if (config_.base_url.empty()) {
-        config_.base_url = get_required_env("OPENAI_BASE_URL");
-    }
-    if (config_.api_key.empty()) {
-        config_.api_key = get_required_env("OPENAI_API_KEY");
-    }
-    if (config_.model_name.empty()) {
-        config_.model_name = get_required_env("OPENAI_MODEL");
-    }
-
+    // 配置由 main: load_env → ModelConfig 注入；query 只负责发请求
     nlohmann::json body = {
         {"model", config_.model_name},
         {"messages", {

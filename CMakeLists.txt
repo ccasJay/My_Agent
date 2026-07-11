@@ -10,6 +10,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 
 add_library(swe_agent_model
+    src/dotenv_loader.cpp
     src/http_client.cpp
     src/model_client.cpp
 )
