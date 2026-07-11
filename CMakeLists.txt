@@ -7,8 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 
 add_library(swe_agent_model
+    src/http_client.cpp
     src/model_client.cpp
 )
 
@@ -16,7 +18,10 @@ target_include_directories(swe_agent_model
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(swe_agent_model PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(swe_agent_model
+    PUBLIC nlohmann_json::nlohmann_json
+    PRIVATE CURL::libcurl
+)
 
 target_compile_options(swe_agent_model PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

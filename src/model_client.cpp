@@ -1,9 +1,9 @@
+#include "http/http_client.hpp"
 #include "model/model_client.hpp"
-#include <curl/curl.h>
 #include <cstdlib>
-#include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -18,16 +18,6 @@ std::string get_required_env(const std::string& name) {
 }  // namespace
 
 namespace swe_agent::model {
-
-size_t WriteCallback (
-    void* contents,
-    size_t size ,//实际数据长度： size * nmemb
-    size_t nmemb ,
-    void* userp 
-) {
-    ((std::string*)userp)->append((char*)contents, size * nmemb);
-    return size * nmemb;
-};
 
 ModelResponse OpenaiCompatible::query(const MSG& messages) {
     if (messages.empty()) {
@@ -44,10 +34,6 @@ ModelResponse OpenaiCompatible::query(const MSG& messages) {
         config_.model_name = get_required_env("OPENAI_MODEL");
     }
 
-    CURL* curl = curl_easy_init(); // 初始化一个CURL对象
-
-    std::string response;
-
     nlohmann::json body = {
         {"model", config_.model_name},
         {"messages", {
@@ -58,80 +44,28 @@ ModelResponse OpenaiCompatible::query(const MSG& messages) {
         }}
     };
 
-    struct curl_slist* headers = nullptr;
+    const std::vector<std::string> headers{
+        "Content-Type: application/json",
+        "Authorization: Bearer " + config_.api_key,
+    };
 
-    /* 设置 HTTP Header */
-    headers = curl_slist_append(
+    http::HttpClient http_client;
+    /* 调用统一的 HTTP POST 接口 */
+    const http::HttpResponse response = http_client.post(
+        config_.base_url,
         headers,
-        "Content-Type: application/json"
-    );
-    
-    headers = curl_slist_append(
-            headers,
-            ("Authorization: Bearer " + config_.api_key).c_str()
+        body.dump()
     );
 
-    /* 设置请求 URL*/
-    curl_easy_setopt(
-        curl,
-        CURLOPT_URL,
-        config_.base_url.c_str()
-    );
-
-    /* json对象转换为字符串 */
-    std::string data = body.dump();
-
-    /* 设置 HTTP POST 请求体 */
-    curl_easy_setopt(
-        curl,
-        CURLOPT_POSTFIELDS,
-        data.c_str()
-    );
-
-    /* 设置 HTTP Header */
-    curl_easy_setopt (
-        curl,
-        CURLOPT_HTTPHEADER,
-        headers
-    );
-
-    /* 设置响应处理函数 */
-    curl_easy_setopt (
-        curl,
-        CURLOPT_WRITEFUNCTION,
-        WriteCallback
-    );
-
-    /* 传入WriteCallback 的用户数据 */
-    curl_easy_setopt (
-        curl,
-        CURLOPT_WRITEDATA,
-        &response
-    );
-
-    /* 执行 HTTP 请求 */
-    CURLcode res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        std::cerr 
-            << "curl error: "
-            << curl_easy_strerror(res)
-            << std::endl;
-        curl_easy_cleanup(curl);
-        return ModelResponse{"curl error: " + std::string(curl_easy_strerror(res))};
+    if (response.status_code < 200 || response.status_code >= 300) {
+        throw std::runtime_error{
+            "Model API returned HTTP " + std::to_string(response.status_code) +
+            ": " + response.body
+        };
     }
 
     /* 使用 nlohmann::json 进行解析 */
-    auto result = nlohmann::json::parse(response);
-
-    std::cout
-        << result["choices"][0]["message"]["content"]
-        << std::endl;
-
-
-    /* free libcurl resourse */
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    auto result = nlohmann::json::parse(response.body);
 
     return ModelResponse{result["choices"][0]["message"]["content"]};
 }
