@@ -8,8 +8,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
+find_package(yaml-cpp CONFIG REQUIRED)
 
 add_library(swe_agent_model
+    src/agent_loader.cpp
     src/dotenv_loader.cpp
     src/http_client.cpp
     src/model_client.cpp
@@ -21,7 +23,7 @@ target_include_directories(swe_agent_model
 
 target_link_libraries(swe_agent_model
     PUBLIC nlohmann_json::nlohmann_json
-    PRIVATE CURL::libcurl
+    PRIVATE CURL::libcurl yaml-cpp::yaml-cpp
 )
 
 target_compile_options(swe_agent_model PRIVATE

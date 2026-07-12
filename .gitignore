@@ -1,5 +1,19 @@
+# build / IDE
 build/
 .cache/
-.env
 .DS_Store
-.claude
+.claude/
+
+# secrets
+.env
+
+# cmake noise (e.g. cmake --system-information)
+__cmake_systeminformation/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# editor / OS
+*.swp
+*~
