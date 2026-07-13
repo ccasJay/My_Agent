@@ -16,16 +16,10 @@ struct ModelConfig {
     std::string model_name;
 };
 
-template <typename MODEL>
-concept Model = requires(
-    MODEL& client,
-    const MSG& messages,
-    struct ModelConfig config
-) {
-    {
-        client.query(messages)
-    } -> std::same_as<ModelResponse>;
-
+// 模型后端契约：任意能 query(MSG) → ModelResponse 的类型
+template <typename P>
+concept Provider = requires(P& provider, const MSG& messages) {
+    { provider.query(messages) } -> std::same_as<ModelResponse>;
 };
 
 }  // namespace swe_agent::model

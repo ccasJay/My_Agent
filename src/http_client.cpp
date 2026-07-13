@@ -94,6 +94,14 @@ HttpResponse HttpClient::post(
         &response
     );
 
+    /* 超时：连接阶段与整次请求上限，避免一直挂起 */
+    constexpr long kConnectTimeoutSec = 10;
+    constexpr long kTotalTimeoutSec = 60;
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSec);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, kTotalTimeoutSec);
+    // 避免信号打断多线程环境；用 curl 自身超时即可
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
     /* 执行 HTTP 请求 */
     CURLcode result = curl_easy_perform(curl);
     if (result != CURLE_OK) {

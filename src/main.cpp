@@ -1,6 +1,6 @@
-#include "config/dotenv_loader.hpp"
+#include "agent/agent_loop.hpp"
 #include "config/agent_loader.hpp"
-#include "model/message.hpp"
+#include "config/dotenv_loader.hpp"
 #include "model/model_client.hpp"
 
 #include <fstream>
@@ -19,7 +19,7 @@ std::string find_env_path() {
 }
 
 std::string find_agent_path() {
-    for (const char* path : {"config/agent.yaml" , "../config/agent.yaml"}) {
+    for (const char* path : {"config/agent.yaml", "../config/agent.yaml"}) {
         if (std::ifstream{path}.good()) {
             return path;
         }
@@ -31,28 +31,22 @@ std::string find_agent_path() {
 
 int main() {
     try {
-        // 1) .env → map
+        // 1) 密钥 / endpoint
         auto env = swe_agent::config::load_env(find_env_path());
-        auto agent = swe_agent::config::load_agent(find_agent_path());
-        // 2) map → ModelConfig（替换 query 里靠 getenv 兜底）
-        auto config = swe_agent::model::ModelConfig {
-            .model_name = swe_agent::config::get_required(env, "OPENAI_MODEL"),
+        // 2) 文案配置（system / user）
+        auto agent_cfg = swe_agent::config::load_agent(find_agent_path());
+
+        swe_agent::model::ModelConfig env_config{
+            .base_url = swe_agent::config::get_required(env, "OPENAI_BASE_URL"),
             .api_key = swe_agent::config::get_required(env, "OPENAI_API_KEY"),
-            .base_url = swe_agent::config::get_required(env, "OPENAI_BASE_URL")
+            .model_name = swe_agent::config::get_required(env, "OPENAI_MODEL"),
         };
-        
-        // 3) 构造 client（config 已填满，query 不必再 getenv）
-        swe_agent::model::OpenaiCompatible client(config);
 
-        // 4) 调模型
-        // messages 参数还没真正拼进请求；这里先把调用链跑通。
-        swe_agent::model::MSG messages{
-            {swe_agent::model::Role::System, agent.system},
-            {swe_agent::model::Role::User,agent.user}
+        // 3) Provider 实现
+        swe_agent::model::OpenaiCompatible provider(env_config);
 
-        };
-        const swe_agent::model::ModelResponse response = client.query(messages);
-        std::cout << response.content << '\n';
+        // 4) 交给 agent loop（内部组 history、多轮 query；会打印最后一轮）
+        (void)swe_agent::agent::run(provider, agent_cfg);
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << '\n';

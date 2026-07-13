@@ -13,10 +13,13 @@ AgentConfig load_agent(const std::string& path) {
 
     if (const YAML::Node agent = root["agent"]) {
         if (agent["system"]) {
-            cfg.system = agent["system"].as<std::string>();
+            cfg.system_prompt = agent["system"].as<std::string>();
         }
         if (agent["user"]) {
-            cfg.user = agent["user"].as<std::string>();
+            cfg.user_prompt = agent["user"].as<std::string>();
+        }
+        if (agent["step_limit"]) {
+            cfg.step_limit = agent["step_limit"].as<std::size_t>();
         }
     }
 
@@ -26,7 +29,7 @@ AgentConfig load_agent(const std::string& path) {
         }
     }
 
-    if (cfg.user.empty()) {
+    if (cfg.user_prompt.empty()) {
         throw std::runtime_error{"agent.user is required in " + path};
     }
 
