@@ -7,6 +7,13 @@
 
 namespace  {
 using Role = swe_agent::model::Role;
+
+/**
+ * @brief Role 枚举转字符串
+ * 
+ * @param role 
+ * @return const char* 
+ */
 const char* role_to_string(Role role) {
     switch (role) {
         case Role::System: return "system";
@@ -20,6 +27,12 @@ const char* role_to_string(Role role) {
 
 namespace swe_agent::model {
 
+/**
+ * @brief 符合Provider契约的 OpenAI 兼容 API 实现
+ * 
+ * @param messages 
+ * @return ModelResponse 
+ */
 ModelResponse OpenaiCompatible::query(const MSG& messages) {
     if (messages.empty()) {
         return ModelResponse{"Messages are empty"};

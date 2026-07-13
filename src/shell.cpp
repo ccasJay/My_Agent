@@ -9,6 +9,12 @@
 namespace swe_agent::agent {
 namespace {
 
+/**
+ * @brief 去掉字符串右侧的换行符（\n 或 \r），用于 shell 输出处理
+ * 
+ * @param s 
+ * @return std::string 
+ */
 std::string trim_right_newlines(std::string s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
         s.pop_back();
@@ -18,6 +24,12 @@ std::string trim_right_newlines(std::string s) {
 
 }  // namespace
 
+/**
+ * @brief 从 assistant 文本里解析要执行的命令。
+ * 
+ * @param assistant_text 
+ * @return std::optional<std::string> 
+ */
 std::optional<std::string> extract_run_command(const std::string& assistant_text) {
     std::istringstream in (assistant_text);
     std::string line;
@@ -48,6 +60,12 @@ std::optional<std::string> extract_run_command(const std::string& assistant_text
     return std::nullopt;
 }
 
+/**
+ * @brief 执行 shell 命令，合并 stdout/stderr；失败时返回可读错误串（不抛）。
+ * 
+ * @param command 
+ * @return std::string 
+ */
 std::string run_shell(const std::string& command) {
     if (command.empty()) {
         return "[shell] empty command";

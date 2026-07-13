@@ -6,6 +6,15 @@
 
 namespace {
 
+/**
+ * @brief libcurl 回调函数，用于接收响应数据
+ * 
+ * @param contents 
+ * @param size 
+ * @param nmemb 
+ * @param userp 
+ * @return std::size_t 
+ */
 std::size_t WriteCallback (
     char* contents,
     std::size_t size,
@@ -27,6 +36,14 @@ std::size_t WriteCallback (
 
 namespace swe_agent::http {
 
+/**
+ * @brief 执行 HTTP POST 请求
+ * 
+ * @param url 
+ * @param headers 
+ * @param body 
+ * @return HttpResponse 
+ */
 HttpResponse HttpClient::post(
     const std::string& url,
     const std::vector<std::string>& headers,

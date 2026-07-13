@@ -6,6 +6,12 @@
 
 namespace swe_agent::config {
 
+/**
+ * @brief 加载agent配置
+ * 
+ * @param path 
+ * @return AgentConfig 
+ */
 AgentConfig load_agent(const std::string& path) {
     YAML::Node root = YAML::LoadFile(path);
 

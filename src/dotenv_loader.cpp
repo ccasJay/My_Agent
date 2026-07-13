@@ -7,7 +7,12 @@
 
 namespace swe_agent::config {
 
-/* 去掉两端空白：空格/Tab/\r/\n 等（std::isspace） */
+/**
+ * @brief 去掉两端空白：空格/Tab/\r/\n 等（std::isspace）
+ * 
+ * @param str 
+ * @return std::string 
+ */
 std::string trim(const std::string& str) {
     std::size_t begin = 0;
     while (begin < str.size() &&
@@ -23,6 +28,12 @@ std::string trim(const std::string& str) {
     return str.substr(begin, end - begin);
 }
 
+/**
+ * @brief 加载环境变量
+ * 
+ * @param path 
+ * @return EnvMap 
+ */
 EnvMap load_env(const std::string& path) {
     std::ifstream in(path);
     if (!in) {
@@ -64,6 +75,13 @@ EnvMap load_env(const std::string& path) {
     return env;
 }
 
+/**
+ * @brief 获取环境变量的对应值
+ * 
+ * @param env 
+ * @param key 
+ * @return std::string 
+ */
 std::string get_required(const EnvMap& env, const std::string& key) {
     const auto it = env.find(key);
     if (it == env.end() || it->second.empty()) {

@@ -12,6 +12,14 @@
 namespace swe_agent::agent {
 
 // 依赖 Provider 契约，不绑死具体实现（如 OpenaiCompatible）
+/**
+ * @brief Agent loop
+ * 
+ * @tparam P 
+ * @param provider 
+ * @param agent_cfg 
+ * @return model::ModelResponse 
+ */
 template <model::Provider P>
 model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
     model::MSG history;
