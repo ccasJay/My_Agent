@@ -19,6 +19,8 @@ namespace swe_agent::agent {
  * @param provider 
  * @param agent_cfg 
  * @return model::ModelResponse 
+ * @note 初始history压入agent_cfg中的prompt -> 创建一个last{}用于记录对话 -> 进入loop: 
+ *  [模型本轮输出先进 history -> 从assistant文本中解析要执行的命令 -> run_shell()解析命令，记录为observation ,有才进入下一轮-> 将user + observation 压入history进行下一轮] 
  */
 template <model::Provider P>
 model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
@@ -28,8 +30,13 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
 
     const std::size_t step_limit = agent_cfg.step_limit;
     model::ModelResponse last{};
+    std::size_t step = 0;
 
-    for (std::size_t step = 0; step < step_limit; ++step) {
+    while (true) {
+        if(agent_cfg.step_limit > 0 && step >= agent_cfg.step_limit) {
+            break;
+        }
+
         last = provider.query(history);
         if (last.content.empty()) {
             break;
@@ -59,6 +66,7 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
             std::string{"Observation:\n"} + observation,
         });
         // 有 observation 才继续下一轮 query（用掉 step）
+        step++;
     }
 
     return last;

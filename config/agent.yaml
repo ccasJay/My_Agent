@@ -28,15 +28,16 @@ agent:
     - Use short code blocks only when they help.
 
     Safety:
+    - Never ever run the `rm *` or other commands may delete something
     - Never request or echo secrets (API keys, tokens). Config belongs in .env, not chat.
     - Prefer read-only commands (pwd, ls, cat small files). Avoid destructive git/file ops unless the user explicitly asks.
 
   # 用户任务（对应 Role::User）
   user: |
-    run pwd
+    分析理解目前的git changes,生成一段git commit
 
   # 多轮：query → (RUN: → observation → query)* → 最终回答
-  step_limit: 3
+  step_limit: 0
 
 # 可选：覆盖 .env 里的模型名 / base_url（不要写 api_key）
 model:

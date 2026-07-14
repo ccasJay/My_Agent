@@ -30,6 +30,7 @@ namespace swe_agent::model {
 /**
  * @brief 符合Provider契约的 OpenAI 兼容 API 实现
  * 
+ * @note 先组装api_messages -> 构建chat body -> 构建请求头 -> 调用 HTTP POST 接口 (http::HttpClient::post())
  * @param messages 
  * @return ModelResponse 
  */
