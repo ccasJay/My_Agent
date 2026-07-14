@@ -49,10 +49,11 @@ std::optional<std::string> extract_run_command(const std::string& assistant_text
 
         std::string cmd = line.substr(i + kPrefixlen);
         std::size_t j = 0;
-        while (j<cmd.size() && (cmd[j] == ' ' || cmd[j] == '\t')) {
+        while (j < cmd.size() && (cmd[j] == ' ' || cmd[j] == '\t')) {
             ++j;
         }
-        cmd = trim_right_newlines(std::move(cmd));
+        // 必须 substr(j)，否则 RUN: 后空格会留在命令里（日志出现 "$  ls"）
+        cmd = trim_right_newlines(cmd.substr(j));
         if (!cmd.empty()) {
             return cmd;
         }
@@ -80,7 +81,7 @@ std::string run_shell(const std::string& command) {
 
     std::string output;
     std::array<char, 512> buf{};
-    constexpr std::size_t kMaxBytes = 8 * 1024;
+    constexpr std::size_t kMaxBytes = 16 * 1024;
     while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()) != nullptr) {
         output.append(buf.data());
         if (output.size() > kMaxBytes) {
