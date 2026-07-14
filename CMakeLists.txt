@@ -33,3 +33,9 @@ target_compile_options(swe_agent_model PRIVATE
 
 add_executable(swe-agent src/main.cpp)
 target_link_libraries(swe-agent PRIVATE swe_agent_model)
+
+option(SWE_AGENT_BUILD_TESTS "Build unit tests" ON)
+if(SWE_AGENT_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
