@@ -146,7 +146,8 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
                 std::cout << '\n';
             }
 
-            const std::string observation = run_shell(*cmd);
+            const ProcessResult process_result = run_shell(*cmd);
+            const std::string observation = format_process_result(*cmd, process_result);
             std::cout << "================= task complete =================== \n"
                       << observation << '\n';
             break;
@@ -155,7 +156,8 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
         std::cout << "================= step " << step << " (assistant) =================== \n"
                   << last.content << '\n';
 
-        const std::string observation = run_shell(*cmd);
+        const ProcessResult process_result = run_shell(*cmd);
+        const std::string observation = format_process_result(*cmd, process_result);
         std::cout << "================= step " << step << " (observation) =================== \n"
                   << observation << '\n';
 

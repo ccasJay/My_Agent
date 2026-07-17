@@ -43,7 +43,7 @@ agent:
 
   # 用户任务（对应 Role::User）
   user: |
-    总结最近几次的修改
+    请测试 Shell 进程被 SIGTERM 终止的处理。
 
   # 多轮：query → (RUN: → observation → query)* → 最终回答
   # 0 = 不限制步数；调试建议 10~20，避免 nudge 空转烧 token

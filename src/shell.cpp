@@ -5,6 +5,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <sys/wait.h>
 
 namespace swe_agent::agent {
 namespace {
@@ -62,31 +63,36 @@ std::optional<std::string> extract_run_command(const std::string& assistant_text
 }
 
 /**
- * @brief 执行 shell 命令，合并 stdout/stderr；失败时返回可读错误串（不抛）。
+ * @brief 执行 shell 命令，合并 stdout/stderr，并返回结构化结果（不抛）。
  * 
  * @param command 
- * @return std::string 
+ * @return ProcessResult
  */
-std::string run_shell(const std::string& command) {
+ProcessResult run_shell(const std::string& command) {
+    ProcessResult result;
+
     if (command.empty()) {
-        return "[shell] empty command";
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] empty command";
+        return result;
     }
 
     // stderr 并入 stdout，便于整段作为 observation
     const std::string full = command + " 2>&1";
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(full.c_str(), "r"), pclose);
     if (!pipe) {
-        return "[shell] popen failed for: " + command;
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] popen failed for: " + command;
+        return result;
     }
 
-    std::string output;
     std::array<char, 512> buf{};
     constexpr std::size_t kMaxBytes = 16 * 1024;
     while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()) != nullptr) {
-        output.append(buf.data());
-        if (output.size() > kMaxBytes) {
-            output.resize(kMaxBytes);
-            output += "\n...[truncated]";
+        result.output.append(buf.data());
+        if (result.output.size() > kMaxBytes) {
+            result.output.resize(kMaxBytes);
+            result.truncated = true;
             break;
         }
     }
@@ -94,19 +100,55 @@ std::string run_shell(const std::string& command) {
     // 需要 exit status：先 release 再 pclose（否则 unique_ptr 析构也会 pclose）
     FILE* raw = pipe.release();
     const int status = pclose(raw);
+    if (status == -1) {
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] pclose failed for: " + command;
+    } else if (WIFEXITED(status)) {
+        result.termination = TerminationKind::Exited;
+        result.exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        result.termination = TerminationKind::Signaled;
+        result.signal_number = WTERMSIG(status);
+    } else {
+        result.termination = TerminationKind::Unknown;
+    }
 
+    return result;
+}
+
+/**
+ * @brief 将结构化执行结果转换成给 Agent/人阅读的 observation。
+ * 
+ * @param command 
+ * @param result 
+ * @return std::string 
+ */
+std::string format_process_result(
+    const std::string& command,
+    const ProcessResult& result) {
     std::ostringstream oss;
     oss << "$ " << command << '\n';
-    if (output.empty()) {
+    if (result.output.empty()) {
         oss << "(no output)\n";
     } else {
-        oss << output;
-        if (output.back() != '\n') {
+        oss << result.output;
+        if (result.output.back() != '\n') {
             oss << '\n';
         }
     }
-    if (status != 0) {
-        oss << "[exit=" << status << "]\n";
+    if (result.truncated) {
+        oss << "...[truncated]\n";
+    }
+    if (!result.error_message.empty()) {
+        oss << result.error_message << '\n';
+    } else if (result.termination == TerminationKind::Exited &&
+               result.exit_code.has_value() && *result.exit_code != 0) {
+        oss << "[exit=" << *result.exit_code << "]\n";
+    } else if (result.termination == TerminationKind::Signaled &&
+               result.signal_number.has_value()) {
+        oss << "[signal=" << *result.signal_number << "]\n";
+    } else if (result.termination == TerminationKind::Unknown) {
+        oss << "[status=unknown]\n";
     }
     return oss.str();
 }

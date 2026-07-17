@@ -5,7 +5,9 @@
 #include <string>
 
 using swe_agent::agent::extract_run_command;
+using swe_agent::agent::format_process_result;
 using swe_agent::agent::run_shell;
+using swe_agent::agent::TerminationKind;
 
 TEST_CASE("extract_run_command parses RUN: directives", "[shell]") {
     SECTION("simple RUN: pwd") {
@@ -70,12 +72,16 @@ TEST_CASE("extract_run_command parses RUN: directives", "[shell]") {
 
 TEST_CASE("run_shell executes commands and formats output", "[shell]") {
     SECTION("empty command") {
-        const std::string out = run_shell("");
-        REQUIRE(out == "[shell] empty command");
+        const auto result = run_shell("");
+        REQUIRE(result.termination == TerminationKind::ExecutionError);
+        REQUIRE_FALSE(result.success());
+        REQUIRE(result.error_message == "[shell] empty command");
     }
 
     SECTION("echo hello includes prompt and body") {
-        const std::string out = run_shell("echo hello");
+        const auto result = run_shell("echo hello");
+        const std::string out = format_process_result("echo hello", result);
+        REQUIRE(result.success());
         REQUIRE(out.find("$ echo hello") != std::string::npos);
         REQUIRE(out.find("hello") != std::string::npos);
         // Successful commands should not append [exit=...]
@@ -84,13 +90,22 @@ TEST_CASE("run_shell executes commands and formats output", "[shell]") {
 
     SECTION("non-zero exit produces [exit=...]") {
         // Portable: `false` is a shell builtin /usr/bin/false on macOS/Linux
-        const std::string out = run_shell("false");
+        const auto result = run_shell("false");
+        const std::string out = format_process_result("false", result);
+        REQUIRE(result.termination == TerminationKind::Exited);
+        REQUIRE(result.exit_code.has_value());
+        REQUIRE(*result.exit_code != 0);
+        REQUIRE_FALSE(result.success());
         REQUIRE(out.find("$ false") != std::string::npos);
         REQUIRE(out.find("[exit=") != std::string::npos);
     }
 
     SECTION("exit 1 also produces [exit=...]") {
-        const std::string out = run_shell("exit 1");
+        const auto result = run_shell("exit 1");
+        const std::string out = format_process_result("exit 1", result);
+        REQUIRE(result.termination == TerminationKind::Exited);
+        REQUIRE(result.exit_code == 1);
+        REQUIRE_FALSE(result.success());
         REQUIRE(out.find("$ exit 1") != std::string::npos);
         REQUIRE(out.find("[exit=") != std::string::npos);
     }

@@ -15,6 +15,7 @@ add_library(swe_agent_model
     src/dotenv_loader.cpp
     src/http_client.cpp
     src/model_client.cpp
+    src/process_result.cpp
     src/shell.cpp
 )
 
