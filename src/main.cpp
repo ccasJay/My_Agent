@@ -1,4 +1,5 @@
 #include "agent/agent_loop.hpp"
+#include "app_cli/cli.hpp"
 #include "config/agent_loader.hpp"
 #include "config/dotenv_loader.hpp"
 #include "model/model.hpp"
@@ -30,11 +31,16 @@ std::string find_agent_path() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+    swe_agent::cli::Cli cli;
+
     try {
+        // 解析命令行参数
+        const auto options = cli.parse(argc, argv);
+
         // 1) 密钥 / endpoint
         auto env = swe_agent::config::load_env(find_env_path());
-        // 2) 文案配置（system / user）
+        // 2) Prompt 配置（system / user）
         auto agent_cfg = swe_agent::config::load_agent(find_agent_path());
 
         swe_agent::model::ModelConfig env_config{
@@ -43,12 +49,19 @@ int main() {
             .model_name = swe_agent::config::get_required(env, "OPENAI_MODEL"),
         };
 
+        agent_cfg.user_prompt = options.task;
+        if (!options.model.empty()) {
+            env_config.model_name = options.model;
+        }
+
         // 3) Provider 实现
         swe_agent::model::ModelClient client(env_config);
 
         // 4) 交给 agent loop（内部组 history、多轮 query；会打印最后一轮）
         (void)swe_agent::agent::run(client, agent_cfg);
         return 0;
+    } catch (const CLI::ParseError& e) {
+        return cli.exit(e);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << '\n';
         return 1;
