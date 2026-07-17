@@ -5,11 +5,11 @@
 namespace swe_agent::model {
 
 // OpenAI 兼容 API 的一种 Provider 实现
-class OpenaiCompatible {
+class OpenaiCompatible final : public IProvider {
 public:
     explicit OpenaiCompatible(const ModelConfig& config) : config_(config) {}
 
-    ModelResponse query(const MSG& messages);
+    ModelResponse query(const MSG& messages) override;
 
 private:
     ModelConfig config_;

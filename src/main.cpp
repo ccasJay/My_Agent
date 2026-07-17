@@ -1,6 +1,7 @@
 #include "agent/agent_loop.hpp"
 #include "config/agent_loader.hpp"
 #include "config/dotenv_loader.hpp"
+#include "model/model.hpp"
 #include "model/model_client.hpp"
 
 #include <fstream>
@@ -43,10 +44,10 @@ int main() {
         };
 
         // 3) Provider 实现
-        swe_agent::model::OpenaiCompatible provider(env_config);
+        swe_agent::model::ModelClient client(env_config);
 
         // 4) 交给 agent loop（内部组 history、多轮 query；会打印最后一轮）
-        (void)swe_agent::agent::run(provider, agent_cfg);
+        (void)swe_agent::agent::run(client, agent_cfg);
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << '\n';

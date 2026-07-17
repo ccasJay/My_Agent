@@ -1,13 +1,21 @@
 #include "http/http_client.hpp"
 #include "model/message.hpp"
 #include "model/model_client.hpp"
+#include "model/model.hpp"
 #include "model/openai_format.hpp"
 
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
 
 namespace swe_agent::model {
+
+ModelClient::ModelClient(const ModelConfig& config) : provider_(std::make_unique<OpenaiCompatible>(config)) {}
+
+ModelResponse ModelClient::query(const MSG& message) {
+    return provider_->query(message);
+}
 
 /**
  * @brief 符合 Provider 契约的 OpenAI 兼容 API 实现
