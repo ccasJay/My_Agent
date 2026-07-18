@@ -1,9 +1,11 @@
+#include "agent/agent_event.hpp"
 #include "agent/agent_loop.hpp"
 #include "app_cli/cli.hpp"
 #include "config/agent_loader.hpp"
 #include "config/dotenv_loader.hpp"
 #include "model/model.hpp"
 #include "model/model_client.hpp"
+#include "tui/tui.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -29,6 +31,50 @@ std::string find_agent_path() {
     throw std::runtime_error{"Cannot find agent.yaml"};
 }
 
+void print_agent_event(const swe_agent::agent::AgentEvent& event) {
+    using swe_agent::agent::AgentEventType;
+
+    switch (event.type) {
+    case AgentEventType::Assistant:
+        std::cout << "================= step " << event.step
+                  << " (assistant) =================== \n"
+                  << event.content << '\n';
+        break;
+    case AgentEventType::FormatError:
+        std::cout << "================= step " << event.step
+                  << " (format error, continue) =================== \n"
+                  << event.content << '\n';
+        break;
+    case AgentEventType::CommandStarted:
+        break;
+    case AgentEventType::CommandFinished:
+        if (event.command == "echo COMPLETE_TASK") {
+            std::cout << "================= task complete =================== \n";
+        } else {
+            std::cout << "================= step " << event.step
+                      << " (observation) =================== \n";
+        }
+        std::cout << event.content << '\n';
+        break;
+    case AgentEventType::Completed:
+        std::cout << "================= final =================== \n"
+                  << event.content;
+        if (event.content.empty() || event.content.back() != '\n') {
+            std::cout << '\n';
+        }
+        break;
+    case AgentEventType::Stopped:
+        std::cout << "================= stopped ===================\n";
+        break;
+    case AgentEventType::StepLimitReached:
+        std::cout << "================= step limit reached ===================\n";
+        break;
+    case AgentEventType::EmptyResponse:
+        std::cout << "================= empty response ===================\n";
+        break;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -49,7 +95,6 @@ int main(int argc, char* argv[]) {
             .model_name = swe_agent::config::get_required(env, "OPENAI_MODEL"),
         };
 
-        agent_cfg.user_prompt = options.task;
         if (!options.model.empty()) {
             env_config.model_name = options.model;
         }
@@ -57,8 +102,14 @@ int main(int argc, char* argv[]) {
         // 3) Provider 实现
         swe_agent::model::ModelClient client(env_config);
 
-        // 4) 交给 agent loop（内部组 history、多轮 query；会打印最后一轮）
-        (void)swe_agent::agent::run(client, agent_cfg);
+        if (options.use_tui()) {
+            return swe_agent::tui::run(client, agent_cfg, env_config.model_name);
+        }
+
+        agent_cfg.user_prompt = options.task;
+        swe_agent::agent::AgentRunOptions run_options;
+        run_options.on_event = print_agent_event;
+        (void)swe_agent::agent::run(client, agent_cfg, run_options);
         return 0;
     } catch (const CLI::ParseError& e) {
         return cli.exit(e);

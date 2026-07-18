@@ -3,12 +3,14 @@
 namespace swe_agent::cli {
 
 Cli::Cli() {
-    app_.add_option("-t", options_.task, "Task for the agent")->required();
+    task_option_ =
+        app_.add_option("-t", options_.task, "Task for non-interactive mode");
     app_.add_option("-m", options_.model, "Model name");
 }
 
 Cli::RunOption Cli::parse(int argc, char* argv[]) {
     app_.parse(argc, argv);
+    options_.task_provided = task_option_->count() > 0;
     return options_;
 }
 

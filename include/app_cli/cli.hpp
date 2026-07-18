@@ -10,6 +10,12 @@ public:
     struct RunOption {
         std::string task;
         std::string model;
+        // 必须记录参数是否出现，不能用 task.empty() 区分 `-t ""` 与无 -t。
+        bool task_provided{false};
+
+        [[nodiscard]] bool use_tui() const noexcept {
+            return !task_provided;
+        }
     };
 
     Cli();
@@ -20,6 +26,7 @@ public:
 private:
     CLI::App app_{"Run SWE Agent"};
     RunOption options_;
+    CLI::Option* task_option_{nullptr};
 };
 
 }  // namespace swe_agent::cli
