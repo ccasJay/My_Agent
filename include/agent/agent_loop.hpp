@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/agent_event.hpp"
+#include "agent/agent_run_result.hpp"
 #include "agent/shell.hpp"
 #include "config/agent_loader.hpp"
 #include "model/message.hpp"
@@ -7,10 +9,10 @@
 
 #include <cctype>
 #include <cstddef>
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace swe_agent::agent {
 namespace {
@@ -76,6 +78,26 @@ constexpr std::string_view kMissingConclusionHint =
     "Write a short Conclusion (what you found), then end with:\n"
     "RUN: echo COMPLETE_TASK";
 
+void emit_event(
+    const AgentRunOptions& options,
+    AgentEventType type,
+    std::size_t step,
+    std::string content = {},
+    std::string command = {}) {
+    if (options.on_event) {
+        options.on_event(AgentEvent{
+            .type = type,
+            .step = step,
+            .content = std::move(content),
+            .command = std::move(command),
+        });
+    }
+}
+
+bool should_stop(const AgentRunOptions& options) {
+    return options.stop_token.stop_requested();
+}
+
 }  // namespace
 
 // 依赖 Provider 契约，不绑死具体实现（如 OpenaiCompatible）
@@ -85,27 +107,46 @@ constexpr std::string_view kMissingConclusionHint =
  * @tparam P
  * @param provider
  * @param agent_cfg
- * @return model::ModelResponse
+ * @return AgentRunResult
  * @note 初始history压入agent_cfg中的prompt -> last{} -> loop:
  *  [assistant 进 history -> 解析 RUN: -> COMPLETE_TASK 且有结论则结束;
  *   无 RUN: 则 nudge; 否则 run_shell → observation 压入 history 继续]
  */
 template <model::Provider P>
-model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
+AgentRunResult run(
+    P& provider,
+    const config::AgentConfig& agent_cfg,
+    const AgentRunOptions& options = {}) {
     model::MSG history;
     history.push_back({model::Role::System, agent_cfg.system_prompt});
     history.push_back({model::Role::User, agent_cfg.user_prompt});
 
     model::ModelResponse last{};
     std::size_t step = 0;
+    AgentRunStatus status = AgentRunStatus::EmptyResponse;
 
     while (true) {
+        if (should_stop(options)) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
+
         if (agent_cfg.step_limit > 0 && step >= agent_cfg.step_limit) {
+            emit_event(options, AgentEventType::StepLimitReached, step);
+            status = AgentRunStatus::StepLimitReached;
             break;
         }
 
         last = provider.query(history);
+        if (should_stop(options)) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
         if (last.content.empty()) {
+            emit_event(options, AgentEventType::EmptyResponse, step);
+            status = AgentRunStatus::EmptyResponse;
             break;
         }
 
@@ -115,12 +156,13 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
         // 2) 若含 RUN: 行 → 本地执行 → observation 以 User 写回
         const auto cmd = extract_run_command(last.content);
         if (!cmd) {
-            std::cout << "================= step " << step << " (assistant) =================== \n"
-                      << last.content << '\n';
+            emit_event(options, AgentEventType::Assistant, step, last.content);
             history.push_back({model::Role::User, std::string{kFormatHint}});
-            std::cout << "================= step " << step
-                      << " (format error, continue) =================== \n"
-                      << kFormatHint << '\n';
+            emit_event(
+                options,
+                AgentEventType::FormatError,
+                step,
+                std::string{kFormatHint});
             step++;
             continue;
         }
@@ -129,37 +171,70 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
         if (is_task_completed(*cmd)) {
             const std::string conclusion = strip_run_lines(last.content);
             if (!has_nonempty_conclusion(conclusion)) {
-                std::cout << "================= step " << step << " (assistant) =================== \n"
-                          << last.content << '\n';
+                emit_event(options, AgentEventType::Assistant, step, last.content);
                 history.push_back({model::Role::User, std::string{kMissingConclusionHint}});
-                std::cout << "================= step " << step
-                          << " (missing conclusion, continue) =================== \n"
-                          << kMissingConclusionHint << '\n';
+                emit_event(
+                    options,
+                    AgentEventType::FormatError,
+                    step,
+                    std::string{kMissingConclusionHint});
                 step++;
                 continue;
             }
 
-            // 成功收工：只打印 final（不再打整段 assistant，避免结论重复）
-            std::cout << "================= final =================== \n"
-                      << conclusion;
-            if (conclusion.empty() || conclusion.back() != '\n') {
-                std::cout << '\n';
+            if (should_stop(options)) {
+                emit_event(options, AgentEventType::Stopped, step);
+                status = AgentRunStatus::Stopped;
+                break;
             }
 
+            emit_event(
+                options,
+                AgentEventType::CommandStarted,
+                step,
+                {},
+                *cmd);
             const ProcessResult process_result = run_shell(*cmd);
             const std::string observation = format_process_result(*cmd, process_result);
-            std::cout << "================= task complete =================== \n"
-                      << observation << '\n';
+            emit_event(
+                options,
+                AgentEventType::CommandFinished,
+                step,
+                observation,
+                *cmd);
+            // 停止可能在 Shell 阻塞期间到达；此时 Stopped 必须优先于 Completed。
+            if (should_stop(options)) {
+                emit_event(options, AgentEventType::Stopped, step);
+                status = AgentRunStatus::Stopped;
+                break;
+            }
+            emit_event(options, AgentEventType::Completed, step, conclusion);
+            status = AgentRunStatus::Completed;
             break;
         }
 
-        std::cout << "================= step " << step << " (assistant) =================== \n"
-                  << last.content << '\n';
+        emit_event(options, AgentEventType::Assistant, step, last.content);
 
+        if (should_stop(options)) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
+
+        emit_event(
+            options,
+            AgentEventType::CommandStarted,
+            step,
+            {},
+            *cmd);
         const ProcessResult process_result = run_shell(*cmd);
         const std::string observation = format_process_result(*cmd, process_result);
-        std::cout << "================= step " << step << " (observation) =================== \n"
-                  << observation << '\n';
+        emit_event(
+            options,
+            AgentEventType::CommandFinished,
+            step,
+            observation,
+            *cmd);
 
         // 前缀方便模型/人阅读；Role::User 兼容未接 tool_calls 的 API
         history.push_back({
@@ -168,9 +243,19 @@ model::ModelResponse run(P& provider, const config::AgentConfig& agent_cfg) {
         });
         // 有 observation 才继续下一轮 query（用掉 step）
         step++;
+
+        if (should_stop(options)) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
     }
 
-    return last;
+    return AgentRunResult{
+        .status = status,
+        .response = std::move(last),
+        .step = step,
+    };
 }
 
 }  // namespace swe_agent::agent
