@@ -12,9 +12,9 @@ namespace {
 
 /**
  * @brief 去掉字符串右侧的换行符（\n 或 \r），用于 shell 输出处理
- * 
- * @param s 
- * @return std::string 
+ *
+ * @param s
+ * @return std::string
  */
 std::string trim_right_newlines(std::string s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
@@ -27,9 +27,9 @@ std::string trim_right_newlines(std::string s) {
 
 /**
  * @brief 从 assistant 文本里解析要执行的命令。
- * 
- * @param assistant_text 
- * @return std::optional<std::string> 
+ *
+ * @param assistant_text
+ * @return std::optional<std::string>
  */
 std::optional<std::string> extract_run_command(const std::string& assistant_text) {
     std::istringstream in (assistant_text);
@@ -64,8 +64,8 @@ std::optional<std::string> extract_run_command(const std::string& assistant_text
 
 /**
  * @brief 执行 shell 命令，合并 stdout/stderr，并返回结构化结果（不抛）。
- * 
- * @param command 
+ *
+ * @param command
  * @return ProcessResult
  */
 ProcessResult run_shell(const std::string& command) {
@@ -89,11 +89,14 @@ ProcessResult run_shell(const std::string& command) {
     std::array<char, 512> buf{};
     constexpr std::size_t kMaxBytes = 16 * 1024;
     while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()) != nullptr) {
+        if (result.truncated) {
+            // 仍需排空管道，否则高输出子进程可能阻塞在 write，pclose 也会一直等待。
+            continue;
+        }
         result.output.append(buf.data());
         if (result.output.size() > kMaxBytes) {
             result.output.resize(kMaxBytes);
             result.truncated = true;
-            break;
         }
     }
 
@@ -118,10 +121,10 @@ ProcessResult run_shell(const std::string& command) {
 
 /**
  * @brief 将结构化执行结果转换成给 Agent/人阅读的 observation。
- * 
- * @param command 
- * @param result 
- * @return std::string 
+ *
+ * @param command
+ * @param result
+ * @return std::string
  */
 std::string format_process_result(
     const std::string& command,

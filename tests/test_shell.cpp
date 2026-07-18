@@ -109,4 +109,13 @@ TEST_CASE("run_shell executes commands and formats output", "[shell]") {
         REQUIRE(out.find("$ exit 1") != std::string::npos);
         REQUIRE(out.find("[exit=") != std::string::npos);
     }
+
+    SECTION("large output is truncated without blocking the child") {
+        const auto result = run_shell(
+            "awk 'BEGIN { for (i = 0; i < 20000; ++i) print \"xxxxxxxxxx\" }'");
+
+        REQUIRE(result.success());
+        REQUIRE(result.truncated);
+        REQUIRE(result.output.size() == 16 * 1024);
+    }
 }
