@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(swe_agent_model LANGUAGES CXX)
+project(swe_agent LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -11,6 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 
 FetchContent_Declare(
@@ -21,7 +22,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(CLI11)
 
-add_library(swe_agent_model
+set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    FTXUI
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+    GIT_TAG v7.0.1
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(FTXUI)
+
+add_library(swe_agent_core
     src/agent_loader.cpp
     src/dotenv_loader.cpp
     src/http_client.cpp
@@ -30,25 +40,53 @@ add_library(swe_agent_model
     src/shell.cpp
 )
 
-target_include_directories(swe_agent_model
+target_include_directories(swe_agent_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(swe_agent_model
+target_link_libraries(swe_agent_core
     PUBLIC nlohmann_json::nlohmann_json
     PRIVATE CURL::libcurl yaml-cpp::yaml-cpp
 )
 
-target_compile_options(swe_agent_model PRIVATE
+target_compile_options(swe_agent_core PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+)
+
+add_library(swe_agent_tui_support
+    src/log_block.cpp
+    src/log_viewport.cpp
+    src/prompt_history.cpp
+    src/run_status.cpp
+    src/tui_session.cpp
+    src/tui_state.cpp
+)
+target_include_directories(swe_agent_tui_support
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(swe_agent_tui_support
+    PUBLIC Threads::Threads
+)
+target_compile_options(swe_agent_tui_support PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
 
 add_executable(swe-agent
     src/main.cpp
     src/cli.cpp
+    src/tui.cpp
 )
 set_target_properties(swe-agent PROPERTIES OUTPUT_NAME agent)
-target_link_libraries(swe-agent PRIVATE swe_agent_model CLI11::CLI11)
+target_link_libraries(swe-agent PRIVATE
+    swe_agent_core
+    swe_agent_tui_support
+    CLI11::CLI11
+    Threads::Threads
+    ftxui::ftxui
+)
+target_compile_options(swe-agent PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+)
 
 install(TARGETS swe-agent
     RUNTIME DESTINATION bin
