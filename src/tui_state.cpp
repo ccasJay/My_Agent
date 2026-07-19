@@ -55,6 +55,7 @@ bool TuiState::begin_task(std::string_view task) {
     status_ = TuiStatus::Running;
     activity_ = TuiActivity::Thinking;
     activity_detail_.clear();
+    pending_command_.clear();
     turn_started_at_ = Clock::now();
     activity_started_at_ = turn_started_at_;
     step_ = 0;
@@ -64,6 +65,40 @@ bool TuiState::begin_task(std::string_view task) {
         "Task " + std::to_string(task_count_),
         std::string{task});
     return true;
+}
+
+void TuiState::begin_command_approval(
+    const agent::CommandRequest& request) {
+    if (status_ != TuiStatus::Running) {
+        return;
+    }
+    activity_ = TuiActivity::AwaitingApproval;
+    activity_detail_ = compact_activity_detail(request.command);
+    pending_command_ = request.command;
+    step_ = request.step;
+    activity_started_at_ = Clock::now();
+}
+
+void TuiState::resolve_command_approval(
+    const agent::CommandDecision& decision) {
+    if (pending_command_.empty()) {
+        return;
+    }
+
+    if (decision.action == agent::CommandAction::Reject) {
+        std::string content = "$ " + pending_command_;
+        if (!decision.reason.empty()) {
+            content += "\nReason: " + decision.reason;
+        }
+        append(TuiLogKind::System, "Command rejected", std::move(content));
+    }
+
+    pending_command_.clear();
+    activity_detail_.clear();
+    if (status_ == TuiStatus::Running) {
+        activity_ = TuiActivity::Thinking;
+        activity_started_at_ = Clock::now();
+    }
 }
 
 bool TuiState::request_stop() {
@@ -138,6 +173,7 @@ void TuiState::apply_result(const agent::AgentRunResult& result) {
     step_ = result.step;
     activity_ = TuiActivity::Idle;
     activity_detail_.clear();
+    pending_command_.clear();
 
     switch (result.status) {
     case agent::AgentRunStatus::Completed:
@@ -159,6 +195,7 @@ void TuiState::fail_task(std::string message) {
     status_ = TuiStatus::Error;
     activity_ = TuiActivity::Idle;
     activity_detail_.clear();
+    pending_command_.clear();
     append(TuiLogKind::Error, "Error", std::move(message));
 }
 
@@ -190,6 +227,14 @@ TuiState::TimePoint TuiState::activity_started_at() const noexcept {
     return activity_started_at_;
 }
 
+bool TuiState::awaiting_command_approval() const noexcept {
+    return !pending_command_.empty();
+}
+
+const std::string& TuiState::pending_command() const noexcept {
+    return pending_command_;
+}
+
 const std::string& TuiState::model_name() const noexcept {
     return model_name_;
 }
@@ -206,6 +251,8 @@ std::string TuiState::status_text() const {
         switch (activity_) {
         case TuiActivity::Thinking:
             return "Thinking";
+        case TuiActivity::AwaitingApproval:
+            return "Awaiting approval";
         case TuiActivity::RunningCommand:
             return "Running command";
         case TuiActivity::Idle:
@@ -237,6 +284,11 @@ std::string TuiState::activity_text() const {
     switch (activity_) {
     case TuiActivity::Thinking:
         return "Thinking";
+    case TuiActivity::AwaitingApproval:
+        if (activity_detail_.empty()) {
+            return "Awaiting approval";
+        }
+        return "Approve " + activity_detail_;
     case TuiActivity::RunningCommand: {
         if (activity_detail_.empty()) {
             return "Running command";

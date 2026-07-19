@@ -63,6 +63,7 @@ int run(
     LogViewport log_viewport;
     Element cached_log_panel;
     bool log_panel_dirty = true;
+    bool cached_approval_pending = false;
     int cached_terminal_width = 0;
     int cached_terminal_height = 0;
     bool exit_after_stop = false;
@@ -155,6 +156,10 @@ int run(
 
     auto renderer = Renderer(input, [&] {
         const TuiSnapshot snapshot = session.snapshot(cached_log_revision);
+        if (snapshot.awaiting_approval != cached_approval_pending) {
+            cached_approval_pending = snapshot.awaiting_approval;
+            log_panel_dirty = true;
+        }
         const auto render_now = RunStatusAnimation::Clock::now();
         run_status_animation.sync(
             snapshot.running,
@@ -204,7 +209,10 @@ int run(
         if (log_panel_dirty) {
             // spinner 帧会跳过此块，直接复用 cached_log_panel。
             const std::size_t render_limit = static_cast<std::size_t>(
-                std::max(terminal_size.dimy - 8, 1));
+                std::max(
+                    terminal_size.dimy -
+                        (snapshot.awaiting_approval ? 10 : 8),
+                    1));
             cached_log_panel = render_log_panel(
                 cached_log_lines,
                 log_viewport.render_window(render_limit),
@@ -213,7 +221,9 @@ int run(
             log_panel_dirty = false;
         }
 
-        const Element input_panel = snapshot.running
+        const Element input_panel = snapshot.awaiting_approval
+            ? render_approval_panel(snapshot, cached_terminal_width)
+            : snapshot.running
             ? render_run_panel(
                   snapshot,
                   run_status_animation,
@@ -237,6 +247,8 @@ int run(
                 cached_log_lines.size()),
             render_shortcuts(
                 snapshot.running,
+                snapshot.awaiting_approval,
+                snapshot.command_mode,
                 active_pane,
                 log_viewport.following_tail()),
         });
@@ -361,6 +373,19 @@ int run(
             return true;
         }
 
+        if (session.awaiting_command_approval()) {
+            if (event == Event::Character('y') ||
+                event == Event::Character('Y')) {
+                (void)session.approve_command();
+                return true;
+            }
+            if (event == Event::Character('n') ||
+                event == Event::Character('N')) {
+                (void)session.reject_command();
+                return true;
+            }
+        }
+
         if (event == Event::PageUp) {
             scroll_up(5);
             return true;
@@ -403,8 +428,12 @@ int run(
 
         const bool running = session.running();
 
-        if (!running &&
-            (event == Event::Tab || event == Event::TabReverse)) {
+        if (!running && event == Event::TabReverse) {
+            (void)session.toggle_command_mode();
+            return true;
+        }
+
+        if (!running && event == Event::Tab) {
             if (active_pane == ActivePane::Prompt && !log_blocks.empty()) {
                 active_pane = ActivePane::Scrollback;
                 sync_selected_block_to_viewport();

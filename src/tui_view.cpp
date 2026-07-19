@@ -289,6 +289,34 @@ ftxui::Element render_run_panel(
     return hbox(std::move(elements)) | border;
 }
 
+ftxui::Element render_approval_panel(
+    const TuiSnapshot& snapshot,
+    int terminal_width) {
+    using namespace ftxui;
+    const int command_width = std::max(terminal_width - 8, 1);
+    const std::string command = truncate_to_width(
+        snapshot.pending_command,
+        command_width);
+    return vbox({
+        hbox({
+            text(" ? ") | bold | color(Color::Yellow),
+            text("Approve this command?") | bold,
+        }),
+        hbox({
+            text(" $ ") | dim,
+            text(command) | color(Color::Yellow),
+        }),
+        hbox({
+            text(" Y ") | bold | color(Color::Green),
+            text("allow  ") | dim,
+            text(" N ") | bold | color(Color::Red),
+            text("reject  ") | dim,
+            filler(),
+            text("Esc stop ") | dim,
+        }),
+    }) | borderStyled(Color::Yellow);
+}
+
 ftxui::Element render_prompt_panel(
     ActivePane active_pane,
     const ftxui::Component& input,
@@ -333,6 +361,13 @@ ftxui::Element render_status_bar(
         text("  │  ") | dim,
         text("step ") | dim,
         text(std::to_string(snapshot.step)) | bold,
+        text("  │  ") | dim,
+        text("mode ") | dim,
+        text(std::string{command_mode_name(snapshot.command_mode)}) |
+            bold |
+            color(snapshot.command_mode == CommandMode::Auto
+                      ? Color::Green
+                      : Color::Yellow),
         filler(),
         text(active_pane == ActivePane::Prompt
                  ? "prompt  │  "
@@ -352,11 +387,20 @@ ftxui::Element render_status_bar(
 
 ftxui::Element render_shortcuts(
     bool running,
+    bool awaiting_approval,
+    CommandMode command_mode,
     ActivePane active_pane,
     bool following_tail) {
     using namespace ftxui;
     Elements hints;
-    if (running) {
+    if (awaiting_approval) {
+        hints = {
+            shortcut("Y", "allow"),
+            shortcut("N", "reject"),
+            shortcut("Esc", "stop"),
+            shortcut("↑/↓", "scroll"),
+        };
+    } else if (running) {
         hints = {
             shortcut("Esc/Ctrl+C", "stop"),
             shortcut("Ctrl+D", "stop & exit"),
@@ -367,6 +411,9 @@ ftxui::Element render_shortcuts(
             shortcut("Enter", "send"),
             shortcut("↑/↓", "history"),
             shortcut("Tab", "logs"),
+            shortcut(
+                "S-Tab",
+                "mode " + std::string{command_mode_name(command_mode)}),
             shortcut("Ctrl+D", "exit"),
         };
     } else {
@@ -375,6 +422,9 @@ ftxui::Element render_shortcuts(
             shortcut("Ctrl+↑/↓", "block"),
             shortcut("Enter", "fold"),
             shortcut("Tab", "prompt"),
+            shortcut(
+                "S-Tab",
+                "mode " + std::string{command_mode_name(command_mode)}),
             shortcut("PgUp/PgDn", "scroll"),
         };
     }

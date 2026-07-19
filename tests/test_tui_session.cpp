@@ -180,3 +180,210 @@ TEST_CASE("TUI session stays busy until the runner returns", "[tui][session]") {
     session.stop_and_join();
     REQUIRE(session.snapshot(0).status_text == "Ready");
 }
+
+TEST_CASE("TUI session approves a pending command", "[tui][session][authorization]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{
+        .action = CommandAction::Stop,
+        .reason = "Not decided",
+    };
+
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .step = 2,
+                .command = "echo approved",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Completed,
+                .response = {},
+                .step = 2,
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+    };
+
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return session.awaiting_command_approval();
+        }));
+    }
+    const auto pending = session.snapshot(0);
+    REQUIRE(pending.awaiting_approval);
+    REQUIRE(pending.pending_command == "echo approved");
+    REQUIRE(pending.command_mode == swe_agent::tui::CommandMode::Review);
+    REQUIRE_FALSE(session.toggle_command_mode());
+    REQUIRE(session.approve_command());
+    REQUIRE_FALSE(session.approve_command());
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Approve);
+    REQUIRE_FALSE(session.snapshot(0).awaiting_approval);
+}
+
+TEST_CASE("TUI session auto mode bypasses command review", "[tui][session][authorization]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+    using swe_agent::tui::CommandMode;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{.action = CommandAction::Stop};
+
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .command = "echo automatic",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Completed,
+                .response = {},
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+    };
+
+    REQUIRE(session.command_mode() == CommandMode::Review);
+    REQUIRE(session.toggle_command_mode());
+    REQUIRE(session.command_mode() == CommandMode::Auto);
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Approve);
+    const auto snapshot = session.snapshot(0);
+    REQUIRE(snapshot.command_mode == CommandMode::Auto);
+    REQUIRE_FALSE(snapshot.awaiting_approval);
+    REQUIRE(session.toggle_command_mode());
+    REQUIRE(session.command_mode() == CommandMode::Review);
+}
+
+TEST_CASE("TUI session rejects a pending command", "[tui][session][authorization]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{.action = CommandAction::Approve};
+
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .command = "rm example.txt",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Completed,
+                .response = {},
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+    };
+
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return session.awaiting_command_approval();
+        }));
+    }
+    REQUIRE(session.reject_command("Not allowed"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Reject);
+    REQUIRE(received.reason == "Not allowed");
+    const auto snapshot = session.snapshot(0);
+    REQUIRE_FALSE(snapshot.awaiting_approval);
+    REQUIRE(snapshot.new_logs.back().heading == "Command rejected");
+}
+
+TEST_CASE("TUI session stop releases command approval", "[tui][session][authorization]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{.action = CommandAction::Approve};
+
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .command = "sleep 10",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Stopped,
+                .response = {},
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+    };
+
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return session.awaiting_command_approval();
+        }));
+    }
+    REQUIRE(session.request_stop());
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Stop);
+    REQUIRE_FALSE(session.snapshot(0).awaiting_approval);
+}

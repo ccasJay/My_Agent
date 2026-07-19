@@ -6,13 +6,25 @@
 
 namespace swe_agent::tui {
 
+std::string_view command_mode_name(CommandMode mode) noexcept {
+    switch (mode) {
+    case CommandMode::Auto:
+        return "auto";
+    case CommandMode::Review:
+        return "review";
+    }
+    return "unknown";
+}
+
 TuiSession::TuiSession(
     std::string model_name,
     TaskRunner runner,
-    Notify notify_callback)
+    Notify notify_callback,
+    CommandMode command_mode)
     : state_(std::move(model_name)),
       runner_(std::move(runner)),
-      notify_(std::move(notify_callback)) {
+      notify_(std::move(notify_callback)),
+      command_mode_(command_mode) {
     if (!runner_) {
         throw std::invalid_argument{"TuiSession requires a task runner"};
     }
@@ -35,6 +47,7 @@ bool TuiSession::start(std::string task) {
 
     {
         std::lock_guard lock{mutex_};
+        approval_decision_.reset();
         if (!state_.begin_task(task)) {
             return false;
         }
@@ -46,6 +59,10 @@ bool TuiSession::start(std::string task) {
         worker_ = std::thread([this, task = std::move(task), stop_token] {
             agent::AgentRunOptions options;
             options.stop_token = stop_token;
+            options.authorizer = [this, stop_token](
+                                     const agent::CommandRequest& request) {
+                return authorize_command(request, stop_token);
+            };
             options.on_event = [this](const agent::AgentEvent& event) {
                 {
                     std::lock_guard lock{mutex_};
@@ -91,19 +108,58 @@ bool TuiSession::request_stop() {
     }
     if (accepted) {
         stop_source_.request_stop();
+        approval_cv_.notify_all();
         notify();
     }
     return accepted;
 }
 
+bool TuiSession::approve_command() {
+    return submit_command_decision(agent::CommandDecision{
+        .action = agent::CommandAction::Approve,
+    });
+}
+
+bool TuiSession::reject_command(std::string reason) {
+    return submit_command_decision(agent::CommandDecision{
+        .action = agent::CommandAction::Reject,
+        .reason = std::move(reason),
+    });
+}
+
+bool TuiSession::toggle_command_mode() {
+    {
+        std::lock_guard lock{mutex_};
+        if (state_.running()) {
+            return false;
+        }
+        command_mode_ = command_mode_ == CommandMode::Auto
+            ? CommandMode::Review
+            : CommandMode::Auto;
+    }
+    notify();
+    return true;
+}
+
 void TuiSession::stop_and_join() {
     stop_source_.request_stop();
+    approval_cv_.notify_all();
     join_worker();
 }
 
 bool TuiSession::running() const {
     std::lock_guard lock{mutex_};
     return state_.running();
+}
+
+bool TuiSession::awaiting_command_approval() const {
+    std::lock_guard lock{mutex_};
+    return state_.awaiting_command_approval();
+}
+
+CommandMode TuiSession::command_mode() const {
+    std::lock_guard lock{mutex_};
+    return command_mode_;
 }
 
 TuiSnapshot TuiSession::snapshot(std::size_t known_log_revision) const {
@@ -117,6 +173,9 @@ TuiSnapshot TuiSession::snapshot(std::size_t known_log_revision) const {
         .status = state_.status(),
         .step = state_.step(),
         .running = state_.running(),
+        .awaiting_approval = state_.awaiting_command_approval(),
+        .pending_command = state_.pending_command(),
+        .command_mode = command_mode_,
         .task_id = state_.task_id(),
         .turn_started_at = state_.turn_started_at(),
         .activity_started_at = state_.activity_started_at(),
@@ -133,6 +192,63 @@ TuiSnapshot TuiSession::snapshot(std::size_t known_log_revision) const {
             logs.end());
     }
     return snapshot;
+}
+
+agent::CommandDecision TuiSession::authorize_command(
+    const agent::CommandRequest& request,
+    const agent::StopToken& stop_token) {
+    {
+        std::lock_guard lock{mutex_};
+        if (stop_token.stop_requested()) {
+            return {
+                .action = agent::CommandAction::Stop,
+                .reason = "Stop requested",
+            };
+        }
+        if (command_mode_ == CommandMode::Auto) {
+            return {
+                .action = agent::CommandAction::Approve,
+            };
+        }
+        approval_decision_.reset();
+        state_.begin_command_approval(request);
+    }
+    notify();
+
+    std::unique_lock lock{mutex_};
+    approval_cv_.wait(lock, [&] {
+        return approval_decision_.has_value() ||
+            stop_token.stop_requested();
+    });
+
+    agent::CommandDecision decision;
+    if (stop_token.stop_requested()) {
+        decision = {
+            .action = agent::CommandAction::Stop,
+            .reason = "Stop requested",
+        };
+    } else {
+        decision = std::move(*approval_decision_);
+    }
+    approval_decision_.reset();
+    state_.resolve_command_approval(decision);
+    lock.unlock();
+    notify();
+    return decision;
+}
+
+bool TuiSession::submit_command_decision(
+    agent::CommandDecision decision) {
+    {
+        std::lock_guard lock{mutex_};
+        if (!state_.awaiting_command_approval() ||
+            approval_decision_.has_value()) {
+            return false;
+        }
+        approval_decision_ = std::move(decision);
+    }
+    approval_cv_.notify_one();
+    return true;
 }
 
 void TuiSession::join_worker() {

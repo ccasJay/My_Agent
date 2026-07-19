@@ -52,6 +52,10 @@ ftxui::Element render_run_panel(
     std::size_t animation_frame,
     int terminal_width);
 
+ftxui::Element render_approval_panel(
+    const TuiSnapshot& snapshot,
+    int terminal_width);
+
 ftxui::Element render_prompt_panel(
     ActivePane active_pane,
     const ftxui::Component& input,
@@ -68,6 +72,8 @@ ftxui::Element render_status_bar(
 
 ftxui::Element render_shortcuts(
     bool running,
+    bool awaiting_approval,
+    CommandMode command_mode,
     ActivePane active_pane,
     bool following_tail);
 

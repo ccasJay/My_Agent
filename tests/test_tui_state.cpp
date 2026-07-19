@@ -96,6 +96,36 @@ TEST_CASE("TUI state reports the current agent activity", "[tui]") {
     REQUIRE(state.activity_text().size() < 100);
 }
 
+TEST_CASE("TUI state tracks command approval", "[tui][authorization]") {
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    swe_agent::tui::TuiState state{"test-model"};
+    REQUIRE(state.begin_task("task"));
+
+    state.begin_command_approval(CommandRequest{
+        .step = 3,
+        .command = "rm example.txt",
+    });
+    REQUIRE(state.awaiting_command_approval());
+    REQUIRE(state.pending_command() == "rm example.txt");
+    REQUIRE(state.step() == 3);
+    REQUIRE(state.status_text() == "Awaiting approval");
+    REQUIRE(state.activity_text() == "Approve rm example.txt");
+
+    state.resolve_command_approval(CommandDecision{
+        .action = CommandAction::Reject,
+        .reason = "Rejected in test",
+    });
+    REQUIRE_FALSE(state.awaiting_command_approval());
+    REQUIRE(state.pending_command().empty());
+    REQUIRE(state.status_text() == "Thinking");
+    REQUIRE(state.logs().back().heading == "Command rejected");
+    REQUIRE(state.logs().back().content.find("Rejected in test") !=
+        std::string::npos);
+}
+
 TEST_CASE("TUI state exposes stopping and error states", "[tui]") {
     swe_agent::tui::TuiState state{"test-model"};
     REQUIRE_FALSE(state.request_stop());

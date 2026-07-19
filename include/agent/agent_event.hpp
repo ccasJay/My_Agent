@@ -34,11 +34,30 @@ struct AgentEvent {
 // 回调运行在调用 agent::run() 的线程上；TUI 中即 Worker 线程。
 using AgentEventHandler = std::function<void(const AgentEvent&)>;
 
+enum class CommandAction {
+    Approve,
+    Reject,
+    Stop,
+};
+
+struct CommandRequest {
+    std::size_t step;
+    std::string command;
+};
+
+struct CommandDecision {
+    CommandAction action;
+    std::string reason;
+};
+
+using CommandAuthorizer = std::function<CommandDecision (const CommandRequest&)>;
+
 struct AgentRunOptions {
     // 实时事件只用于展示过程；任务终态以 AgentRunResult 为准。
     AgentEventHandler on_event;
     // 协作式停止：阻塞中的 HTTP/Shell 不会被强制中断。
     StopToken stop_token;
+    // 授权器
+    CommandAuthorizer authorizer;
 };
-
 }  // namespace swe_agent::agent

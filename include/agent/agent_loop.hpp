@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
 #include <utility>
 
 namespace swe_agent::agent {
@@ -96,6 +97,37 @@ void emit_event(
 
 bool should_stop(const AgentRunOptions& options) {
     return options.stop_token.stop_requested();
+}
+
+/**
+ * @brief 请求授权器对命令进行审批
+ *
+ * @param options
+ * @param step
+ * @param command
+ * @return CommandDecision
+ */
+CommandDecision request_authorization(
+    const AgentRunOptions& options,
+    std::size_t step,
+    std::string_view command) {
+    if (should_stop(options)) {
+        return CommandDecision{
+            .action = CommandAction::Stop,
+            .reason = "Stop requested",
+        };
+    }
+
+    if (!options.authorizer) {
+        return CommandDecision{
+            .action = CommandAction::Approve,
+        };
+    }
+    CommandRequest request{
+        .step = step,
+        .command = std::string{command},
+    };
+    return options.authorizer(request);
 }
 
 }  // namespace
@@ -187,7 +219,6 @@ AgentRunResult run(
                 status = AgentRunStatus::Stopped;
                 break;
             }
-
             emit_event(
                 options,
                 AgentEventType::CommandStarted,
@@ -219,6 +250,28 @@ AgentRunResult run(
             emit_event(options, AgentEventType::Stopped, step);
             status = AgentRunStatus::Stopped;
             break;
+        }
+
+        // 只有真实 Shell 命令需要授权；COMPLETE_TASK 是内部完成协议。
+        const CommandDecision decision =
+            request_authorization(options, step, *cmd);
+        if (decision.action == CommandAction::Stop) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
+
+        if (decision.action == CommandAction::Reject) {
+            std::string rejection = "Host: command rejected by user.\n";
+            if (!decision.reason.empty()) {
+                rejection += "Reason: " + decision.reason + '\n';
+            }
+            history.push_back({
+                model::Role::User,
+                std::string{"Observation:\n"} + rejection,
+            });
+            ++step;
+            continue;
         }
 
         emit_event(

@@ -26,6 +26,7 @@ enum class TuiStatus {
 enum class TuiActivity {
     Idle,
     Thinking,
+    AwaitingApproval,
     RunningCommand,
 };
 
@@ -56,6 +57,8 @@ public:
 
     bool begin_task(std::string_view task);
     bool request_stop();
+    void begin_command_approval(const agent::CommandRequest& request);
+    void resolve_command_approval(const agent::CommandDecision& decision);
     // 事件只更新过程展示；不得在此提前结束 running 状态。
     void apply_event(const agent::AgentEvent& event);
     // Worker 返回后，用最终结果提交真正的终态。
@@ -69,6 +72,8 @@ public:
     [[nodiscard]] std::size_t task_id() const noexcept;
     [[nodiscard]] TimePoint turn_started_at() const noexcept;
     [[nodiscard]] TimePoint activity_started_at() const noexcept;
+    [[nodiscard]] bool awaiting_command_approval() const noexcept;
+    [[nodiscard]] const std::string& pending_command() const noexcept;
     [[nodiscard]] const std::string& model_name() const noexcept;
     [[nodiscard]] const std::vector<TuiLogEntry>& logs() const noexcept;
     [[nodiscard]] std::string status_text() const;
@@ -88,6 +93,7 @@ private:
     TuiStatus status_{TuiStatus::Ready};
     TuiActivity activity_{TuiActivity::Idle};
     std::string activity_detail_;
+    std::string pending_command_;
     TimePoint turn_started_at_{};
     TimePoint activity_started_at_{};
 };

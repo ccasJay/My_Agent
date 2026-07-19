@@ -56,6 +56,18 @@ bool history_has_role_content(
     return false;
 }
 
+bool has_command_event(
+    const std::vector<swe_agent::agent::AgentEvent>& events,
+    swe_agent::agent::AgentEventType type,
+    std::string_view command) {
+    for (const auto& event : events) {
+        if (event.type == type && event.command == command) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 TEST_CASE("agent_loop respects step_limit after one shell observation", "[agent_loop]") {
@@ -333,4 +345,132 @@ TEST_CASE("agent_loop lets stop win after the completion command", "[agent_loop]
     REQUIRE(events[0].type == AgentEventType::CommandStarted);
     REQUIRE(events[1].type == AgentEventType::CommandFinished);
     REQUIRE(events[2].type == AgentEventType::Stopped);
+}
+
+TEST_CASE("agent_loop executes a command approved by the authorizer", "[agent_loop][authorization]") {
+    using swe_agent::agent::AgentEvent;
+    using swe_agent::agent::AgentEventType;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    FakeProvider provider;
+    provider.responses = {
+        "Checking approval\nRUN: echo authorized\n",
+        "Conclusion: approved command completed\nRUN: echo COMPLETE_TASK\n",
+    };
+
+    std::size_t authorizer_calls = 0;
+    std::size_t requested_step = 99;
+    std::string requested_command;
+    std::vector<AgentEvent> events;
+    swe_agent::agent::AgentRunOptions options;
+    options.authorizer = [&](const CommandRequest& request) {
+        ++authorizer_calls;
+        requested_step = request.step;
+        requested_command = request.command;
+        return CommandDecision{
+            .action = CommandAction::Approve,
+        };
+    };
+    options.on_event = [&events](const AgentEvent& event) {
+        events.push_back(event);
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), options);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Completed);
+    REQUIRE(authorizer_calls == 1);
+    REQUIRE(requested_step == 0);
+    REQUIRE(requested_command == "echo authorized");
+    REQUIRE(has_command_event(
+        events, AgentEventType::CommandStarted, "echo authorized"));
+    REQUIRE(has_command_event(
+        events, AgentEventType::CommandFinished, "echo authorized"));
+}
+
+TEST_CASE("agent_loop feeds a rejected command back to the model", "[agent_loop][authorization]") {
+    using swe_agent::agent::AgentEvent;
+    using swe_agent::agent::AgentEventType;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    FakeProvider provider;
+    provider.responses = {
+        "Trying command\nRUN: echo should-not-run\n",
+        "Conclusion: respected rejection\nRUN: echo COMPLETE_TASK\n",
+    };
+
+    std::size_t authorizer_calls = 0;
+    std::vector<AgentEvent> events;
+    swe_agent::agent::AgentRunOptions options;
+    options.authorizer = [&](const CommandRequest& request) {
+        ++authorizer_calls;
+        REQUIRE(request.step == 0);
+        REQUIRE(request.command == "echo should-not-run");
+        return CommandDecision{
+            .action = CommandAction::Reject,
+            .reason = "Unsafe command",
+        };
+    };
+    options.on_event = [&events](const AgentEvent& event) {
+        events.push_back(event);
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), options);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Completed);
+    REQUIRE(authorizer_calls == 1);
+    REQUIRE(provider.seen_histories.size() == 2);
+    REQUIRE(history_has_role_content(
+        provider.seen_histories[1],
+        swe_agent::model::Role::User,
+        "command rejected by user"));
+    REQUIRE(history_has_role_content(
+        provider.seen_histories[1],
+        swe_agent::model::Role::User,
+        "Unsafe command"));
+    REQUIRE_FALSE(has_command_event(
+        events, AgentEventType::CommandStarted, "echo should-not-run"));
+    REQUIRE_FALSE(has_command_event(
+        events, AgentEventType::CommandFinished, "echo should-not-run"));
+}
+
+TEST_CASE("agent_loop stops when command authorization requests stop", "[agent_loop][authorization]") {
+    using swe_agent::agent::AgentEvent;
+    using swe_agent::agent::AgentEventType;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+
+    FakeProvider provider;
+    provider.responses = {"Trying command\nRUN: echo must-not-run\n"};
+
+    std::size_t authorizer_calls = 0;
+    std::vector<AgentEvent> events;
+    swe_agent::agent::AgentRunOptions options;
+    options.authorizer = [&](const CommandRequest&) {
+        ++authorizer_calls;
+        return CommandDecision{
+            .action = CommandAction::Stop,
+            .reason = "Stopped during approval",
+        };
+    };
+    options.on_event = [&events](const AgentEvent& event) {
+        events.push_back(event);
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), options);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Stopped);
+    REQUIRE(provider.call == 1);
+    REQUIRE(authorizer_calls == 1);
+    REQUIRE(events.size() == 2);
+    REQUIRE(events[0].type == AgentEventType::Assistant);
+    REQUIRE(events[1].type == AgentEventType::Stopped);
+    REQUIRE_FALSE(has_command_event(
+        events, AgentEventType::CommandStarted, "echo must-not-run"));
+    REQUIRE_FALSE(has_command_event(
+        events, AgentEventType::CommandFinished, "echo must-not-run"));
 }
