@@ -70,13 +70,28 @@ TEST_CASE("log viewport limits rendering around the current line", "[tui][viewpo
 
     REQUIRE(viewport.jump_to(500));
     window = viewport.render_window(100);
-    REQUIRE(window.begin == 450);
-    REQUIRE(window.end == 550);
+    REQUIRE(window.begin == 401);
+    REQUIRE(window.end == 501);
 
     REQUIRE(viewport.jump_to(10));
     window = viewport.render_window(100);
     REQUIRE(window.begin == 0);
     REQUIRE(window.end == 100);
+}
+
+TEST_CASE("paused log viewport moves immediately away from tail", "[tui][viewport]") {
+    swe_agent::tui::LogViewport viewport;
+    (void)viewport.sync(100);
+
+    const auto tail = viewport.render_window(10);
+    REQUIRE(tail.begin == 90);
+    REQUIRE(tail.end == 100);
+
+    REQUIRE(viewport.scroll_up(1));
+    REQUIRE(viewport.tick());
+    const auto previous = viewport.render_window(10);
+    REQUIRE(previous.begin == 89);
+    REQUIRE(previous.end == 99);
 }
 
 TEST_CASE("log viewport accelerates long scroll distances", "[tui][viewport]") {

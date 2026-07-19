@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/cancellation.hpp"
+#include "cancellation.hpp"
 
 #include <cstddef>
 #include <functional>

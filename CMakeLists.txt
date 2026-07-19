@@ -75,6 +75,7 @@ add_executable(swe-agent
     src/main.cpp
     src/cli.cpp
     src/tui.cpp
+    src/tui_view.cpp
 )
 set_target_properties(swe-agent PROPERTIES OUTPUT_NAME agent)
 target_link_libraries(swe-agent PRIVATE

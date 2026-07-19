@@ -121,7 +121,8 @@ flowchart LR
 - `TuiLogBlocks`：将命令开始和执行结果合并为可折叠语义块。
 - `LogViewport`：管理日志位置、尾部跟随和平滑滚动。
 - `RunStatusAnimation`：管理 Braille 帧、活动文案、阶段计时和任务总计时。
-- `tui.cpp`：只负责 FTXUI 组件、绘制和按键映射。
+- `tui.cpp`：负责 Session 编排、按键映射和动画线程。
+- `tui_view.cpp`：负责 FTXUI 元素构建、日志排版和光标装饰。
 
 FTXUI 类型没有进入 `swe_agent_core`，因此核心 Agent 和 Provider 接口不依赖 UI 库。
 
@@ -196,10 +197,11 @@ FTXUI 日志 Element 树仅在以下情况重建：
 
 新增事件进入 `TuiLogBlocks` 后会返回第一个发生变化的块。TUI 只截断并重建该块之后的缓存；命令完成时通常只更新最后一个命令块，不再重新格式化前面的历史记录。
 
-为保持长会话的滚动流畅度，日志面板只构建当前游标附近的逻辑行窗口：
+为保持长会话的滚动流畅度，日志面板只构建当前终端真正可见的显示行：
 
 - 窗口大小根据终端高度计算。
-- 最少渲染 120 行，最多渲染 600 行。
+- 长单行会按终端宽度预先拆成 UTF-8 安全的可滚动显示行。
+- 滚动帧不再对大量屏幕外 DOM 或二次 frame 布局做无效工作。
 - 窗口外内容仍保存在日志模型中，可通过滚动继续访问。
 - 状态栏显示当前位置和总行数。
 
@@ -307,7 +309,9 @@ export PATH="$HOME/.local/bin:$PATH"
 | `include/tui/log_viewport.hpp` | 日志滚动状态抽象 |
 | `include/tui/prompt_history.hpp` | 任务输入历史 |
 | `include/tui/run_status.hpp` | 运行状态动画与阶段/任务计时 |
-| `src/tui.cpp` | FTXUI 布局、动画和按键绑定 |
+| `src/tui.cpp` | TUI Session 编排、动画和按键绑定 |
+| `include/tui/tui_view.hpp` | FTXUI 纯展示接口 |
+| `src/tui_view.cpp` | 日志排版、面板构建和光标装饰 |
 | `src/tui_state.cpp` | Agent 事件到 UI 状态的转换 |
 | `src/tui_session.cpp` | Worker 生命周期和增量快照 |
 | `src/log_block.cpp` | 日志块合并与折叠状态 |

@@ -128,12 +128,13 @@ LogWindow LogViewport::render_window(std::size_t max_lines) const noexcept {
         return {.begin = 0, .end = line_count_};
     }
 
-    const std::size_t half_window = max_lines / 2;
-    std::size_t begin = current_line_ > half_window
-        ? current_line_ - half_window
+    const std::size_t end_at_cursor = current_line_ + 1;
+    const std::size_t begin = end_at_cursor > max_lines
+        ? end_at_cursor - max_lines
         : 0;
-    begin = std::min(begin, line_count_ - max_lines);
-    return {.begin = begin, .end = begin + max_lines};
+    // 靠近开头时补齐下方行，避免 Home 只显示一行。
+    const std::size_t end = std::min(begin + max_lines, line_count_);
+    return {.begin = begin, .end = end};
 }
 
 }  // namespace swe_agent::tui

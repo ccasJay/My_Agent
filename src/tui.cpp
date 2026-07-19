@@ -8,13 +8,13 @@
 #include "tui/run_status.hpp"
 #include "tui/tui_session.hpp"
 #include "tui/tui_state.hpp"
+#include "tui/tui_view.hpp"
 
 #include <ftxui/component/app.hpp>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/component/mouse.hpp>
 #include <ftxui/dom/elements.hpp>
-#include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
@@ -24,7 +24,6 @@
 #include <cstddef>
 #include <iterator>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -32,167 +31,6 @@
 #include <vector>
 
 namespace swe_agent::tui {
-namespace {
-
-struct LogLine {
-    std::string text;
-    TuiLogKind kind;
-    std::size_t block_index{0};
-    bool heading{false};
-};
-
-struct RenderedLog {
-    std::vector<LogLine> lines;
-    std::vector<std::size_t> block_starts;
-};
-
-enum class ActivePane {
-    Prompt,
-    Scrollback,
-};
-
-void append_content_lines(
-    std::vector<LogLine>& lines,
-    std::string_view content,
-    TuiLogKind kind,
-    std::size_t block_index) {
-    std::istringstream input{std::string{content}};
-    std::string line;
-    while (std::getline(input, line)) {
-        lines.push_back({
-            .text = std::move(line),
-            .kind = kind,
-            .block_index = block_index,
-        });
-    }
-    if (content.empty()) {
-        lines.push_back({
-            .kind = kind,
-            .block_index = block_index,
-        });
-    }
-}
-
-RenderedLog make_log_lines(
-    const std::vector<TuiLogBlock>& blocks,
-    std::size_t first_block) {
-    RenderedLog rendered;
-    for (std::size_t i = first_block; i < blocks.size(); ++i) {
-        const TuiLogBlock& block = blocks[i];
-        rendered.block_starts.push_back(rendered.lines.size());
-
-        std::string heading = block.heading;
-        if (block.foldable) {
-            heading = std::string{block.expanded ? "▾ " : "▸ "} + heading;
-            heading += block.running ? " · running" : " · done";
-        }
-        rendered.lines.push_back({
-            .text = std::move(heading),
-            .kind = block.kind,
-            .block_index = i,
-            .heading = true,
-        });
-
-        if (!block.summary.empty()) {
-            append_content_lines(
-                rendered.lines,
-                block.summary,
-                block.kind,
-                i);
-        }
-        if ((!block.foldable || block.expanded) && !block.detail.empty()) {
-            append_content_lines(
-                rendered.lines,
-                block.detail,
-                block.kind,
-                i);
-        } else if (block.summary.empty()) {
-            append_content_lines(rendered.lines, block.detail, block.kind, i);
-        }
-        rendered.lines.push_back({
-            .kind = block.kind,
-            .block_index = i,
-        });
-    }
-    return rendered;
-}
-
-ftxui::Color log_color(TuiLogKind kind) {
-    using ftxui::Color;
-
-    switch (kind) {
-    case TuiLogKind::Task:
-        return Color::Blue;
-    case TuiLogKind::Assistant:
-        return Color::Cyan;
-    case TuiLogKind::Command:
-        return Color::Yellow;
-    case TuiLogKind::Observation:
-        return Color::White;
-    case TuiLogKind::Final:
-        return Color::Green;
-    case TuiLogKind::System:
-        return Color::Magenta;
-    case TuiLogKind::Error:
-        return Color::Red;
-    }
-    return Color::White;
-}
-
-ftxui::Color status_color(TuiStatus status) {
-    using ftxui::Color;
-
-    switch (status) {
-    case TuiStatus::Ready:
-        return Color::Green;
-    case TuiStatus::Running:
-        return Color::Cyan;
-    case TuiStatus::Stopping:
-        return Color::Yellow;
-    case TuiStatus::Stopped:
-    case TuiStatus::StepLimitReached:
-    case TuiStatus::EmptyResponse:
-        return Color::Yellow;
-    case TuiStatus::Error:
-        return Color::Red;
-    }
-    return Color::White;
-}
-
-ftxui::Element shortcut(std::string key, std::string label) {
-    using namespace ftxui;
-    return hbox({
-        text(std::move(key)) | bold,
-        text(":" + std::move(label)) | dim,
-    });
-}
-
-std::string truncate_to_width(std::string_view value, int max_width) {
-    if (max_width <= 0) {
-        return {};
-    }
-    if (ftxui::string_width(value) <= max_width) {
-        return std::string{value};
-    }
-    if (max_width == 1) {
-        return "…";
-    }
-
-    std::string result;
-    int width = 0;
-    for (const std::string& glyph : ftxui::Utf8ToGlyphs(value)) {
-        const int glyph_width = ftxui::string_width(glyph);
-        if (width + glyph_width > max_width - 1) {
-            break;
-        }
-        result += glyph;
-        width += glyph_width;
-    }
-    result += "…";
-    return result;
-}
-
-}  // namespace
 
 int run(
     model::ModelClient& client,
@@ -255,6 +93,23 @@ int run(
         post_refresh,
     };
 
+    // 由 FTXUI Input 统一处理 UTF-8 编辑、光标位置和水平跟随。
+    int input_cursor = 0;
+    constexpr std::string_view kPromptPlaceholder =
+        "Describe a task and press Enter";
+    InputOption input_option;
+    input_option.placeholder = std::string{kPromptPlaceholder};
+    input_option.multiline = false;
+    input_option.cursor_position = &input_cursor;
+    // 保留 Input 内建光标，只去掉默认的整行反色样式。
+    input_option.transform = [](InputState state) {
+        if (state.is_placeholder) {
+            state.element = state.element | dim;
+        }
+        return state.element;
+    };
+    auto input = Input(&task_input, input_option);
+
     auto start_task = [&] {
         const std::string task = task_input;
         if (!session.start(task)) {
@@ -263,13 +118,12 @@ int run(
 
         prompt_history.record(task);
         task_input.clear();
+        input_cursor = 0;
         idle_ctrl_c_armed = false;
         log_viewport.follow_tail();
         exit_after_stop = false;
         animation_cv.notify_one();
     };
-
-    auto input = Input(&task_input, "Describe a task and press Enter");
 
     auto rebuild_log_lines_from = [&](std::size_t first_block) {
         first_block = std::min(first_block, log_blocks.size());
@@ -280,8 +134,12 @@ int run(
         cached_log_lines.resize(first_line);
         cached_block_starts.resize(first_block);
 
-        RenderedLog rendered =
-            make_log_lines(log_blocks.blocks(), first_block);
+        // 边框占两列；在进入 viewport 前生成真实可滚动的显示行。
+        const int content_width = std::max(cached_terminal_width - 2, 1);
+        RenderedLog rendered = make_log_lines(
+            log_blocks.blocks(),
+            first_block,
+            content_width);
         for (const std::size_t block_start : rendered.block_starts) {
             cached_block_starts.push_back(first_line + block_start);
         }
@@ -305,11 +163,15 @@ int run(
             snapshot.turn_started_at,
             snapshot.activity_started_at);
         const Dimensions terminal_size = Terminal::Size();
-        if (terminal_size.dimx != cached_terminal_width ||
-            terminal_size.dimy != cached_terminal_height) {
+        const bool width_changed =
+            terminal_size.dimx != cached_terminal_width;
+        if (width_changed || terminal_size.dimy != cached_terminal_height) {
             cached_terminal_width = terminal_size.dimx;
             cached_terminal_height = terminal_size.dimy;
             log_panel_dirty = true;
+            if (width_changed && !log_blocks.empty()) {
+                rebuild_log_lines_from(0);
+            }
         }
         bool blocks_changed = false;
         if (snapshot.logs_changed) {
@@ -341,211 +203,85 @@ int run(
 
         if (log_panel_dirty) {
             // spinner 帧会跳过此块，直接复用 cached_log_panel。
-            Elements log_elements;
-            if (cached_log_lines.empty()) {
-                log_elements.push_back(
-                    text("Enter a task below to start the agent.") | dim | center);
-            } else {
-                const std::size_t terminal_rows = static_cast<std::size_t>(
-                    std::max(terminal_size.dimy, 1));
-                const std::size_t render_limit = std::clamp<std::size_t>(
-                    terminal_rows * 6,
-                    120,
-                    600);
-                const LogWindow window =
-                    log_viewport.render_window(render_limit);
-                log_elements.reserve(window.end - window.begin);
-                for (std::size_t i = window.begin; i < window.end; ++i) {
-                    const LogLine& log_line = cached_log_lines[i];
-                    Element line = log_line.heading
-                        ? text("● " + log_line.text)
-                        : paragraph(log_line.text);
-                    if (log_line.heading) {
-                        line = line | bold | color(log_color(log_line.kind));
-                    } else if (log_line.kind == TuiLogKind::Final) {
-                        line = line | bold;
-                    } else if (log_line.kind == TuiLogKind::System) {
-                        line = line | dim;
-                    }
-                    if (i == log_viewport.current_line()) {
-                        line = line | focus;
-                    }
-                    if (active_pane == ActivePane::Scrollback &&
-                        log_line.heading &&
-                        log_line.block_index == selected_block) {
-                        line = line | inverted;
-                    }
-                    log_elements.push_back(std::move(line));
-                }
-            }
-
-            Element panel = vbox(std::move(log_elements)) |
-                frame | flex;
-            cached_log_panel = active_pane == ActivePane::Scrollback
-                ? panel | borderStyled(Color::Cyan)
-                : panel | border;
+            const std::size_t render_limit = static_cast<std::size_t>(
+                std::max(terminal_size.dimy - 8, 1));
+            cached_log_panel = render_log_panel(
+                cached_log_lines,
+                log_viewport.render_window(render_limit),
+                active_pane,
+                selected_block);
             log_panel_dirty = false;
         }
 
-        Element input_panel;
-        if (snapshot.running) {
-            const bool command_activity =
-                snapshot.activity_text.starts_with("Run ");
-            const Color activity_color = snapshot.status == TuiStatus::Stopping
-                ? Color::Red
-                : command_activity ? Color::Green : Color::Cyan;
-            const std::string phase_elapsed = format_run_duration(
-                run_status_animation.phase_elapsed(render_now));
-            const std::string turn_elapsed = format_run_duration(
-                run_status_animation.turn_elapsed(render_now));
-            const int inner_width = std::max(cached_terminal_width - 2, 0);
-            const bool show_phase_elapsed = inner_width >= 20;
-
-            std::string right_text;
-            if (inner_width >= 32) {
-                right_text = turn_elapsed + "  ";
-            }
-            if (inner_width >= 10) {
-                right_text += "Esc stop ";
-            } else if (inner_width >= 5) {
-                right_text += "Esc ";
-            }
-
-            const std::string phase_text = show_phase_elapsed
-                ? " " + phase_elapsed
-                : std::string{};
-            const int fixed_width = 3 +
-                ftxui::string_width(phase_text) +
-                ftxui::string_width(right_text);
-            const std::string activity = truncate_to_width(
-                format_run_activity(run_status_animation.activity()),
-                std::max(inner_width - fixed_width, 0));
-
-            Elements run_status_elements{
-                text(" "),
-                text(std::string{run_spinner_frame(animation_frame.load())}) |
-                    color(activity_color) | bold,
-            };
-            if (!activity.empty()) {
-                if (command_activity && activity.starts_with("Run ")) {
-                    run_status_elements.push_back(text(" Run ") | dim);
-                    run_status_elements.push_back(
-                        text(activity.substr(4)) |
-                        color(Color::Yellow) | bold);
-                } else {
-                    run_status_elements.push_back(
-                        text(" " + activity) |
-                        color(activity_color) | bold);
-                }
-            }
-            if (!phase_text.empty()) {
-                run_status_elements.push_back(text(phase_text) | dim);
-            }
-            run_status_elements.push_back(filler());
-            if (!right_text.empty()) {
-                run_status_elements.push_back(text(right_text) | dim);
-            }
-            input_panel = hbox(std::move(run_status_elements)) | border;
-        } else {
-            Element prompt = hbox({
-                text(" ❯ ") | bold | color(Color::Cyan),
-                active_pane == ActivePane::Prompt
-                    ? input->Render() | flex
-                    : text(task_input.empty()
-                               ? "Describe a task and press Enter"
-                               : task_input) |
-                        flex | dim,
-            });
-            input_panel = active_pane == ActivePane::Prompt
-                ? prompt | borderStyled(Color::Cyan)
-                : prompt | border;
-        }
-
-        const Element header_status = snapshot.running
-            ? text("")
-            : text("● " + snapshot.status_text + " ") |
-                bold | color(status_color(snapshot.status));
-        const Element header = hbox({
-            text(" SWE Agent") | bold | color(Color::Cyan),
-            filler(),
-            header_status,
-        });
-
-        const Element status_bar = hbox({
-            text(" model ") | dim,
-            text(snapshot.model_name) | bold,
-            text("  │  ") | dim,
-            text("step ") | dim,
-            text(std::to_string(snapshot.step)) | bold,
-            filler(),
-            text(active_pane == ActivePane::Prompt
-                     ? "prompt  │  "
-                     : "scrollback  │  ") |
-                dim,
-            text(log_viewport.following_tail()
-                     ? "following latest "
-                     : "scroll paused ") |
-                dim,
-            cached_log_lines.empty()
-                ? text("")
-                : text(std::to_string(log_viewport.current_line() + 1) + "/" +
-                       std::to_string(cached_log_lines.size()) + " ") |
-                    dim,
-        });
-
-        Elements hints;
-        if (snapshot.running) {
-            hints = {
-                shortcut("Esc/Ctrl+C", "stop"),
-                shortcut("Ctrl+D", "stop & exit"),
-                shortcut("↑/↓", "scroll"),
-            };
-        } else {
-            if (active_pane == ActivePane::Prompt) {
-                hints = {
-                    shortcut("Enter", "send"),
-                    shortcut("↑/↓", "history"),
-                    shortcut("Tab", "logs"),
-                    shortcut("Ctrl+D", "exit"),
-                };
-            } else {
-                hints = {
-                    shortcut("↑/↓", "select"),
-                    shortcut("Enter", "fold"),
-                    shortcut("Tab", "prompt"),
-                    shortcut("PgUp/PgDn", "scroll"),
-                };
-            }
-        }
-        if (!log_viewport.following_tail()) {
-            hints.push_back(shortcut("End", "latest"));
-        }
-
-        Elements shortcut_row;
-        for (std::size_t i = 0; i < hints.size(); ++i) {
-            if (i > 0) {
-                shortcut_row.push_back(text("  │  ") | dim);
-            }
-            shortcut_row.push_back(std::move(hints[i]));
-        }
+        const Element input_panel = snapshot.running
+            ? render_run_panel(
+                  snapshot,
+                  run_status_animation,
+                  render_now,
+                  animation_frame.load(),
+                  cached_terminal_width)
+            : render_prompt_panel(
+                  active_pane,
+                  input,
+                  task_input,
+                  kPromptPlaceholder);
 
         return vbox({
-            header,
+            render_header(snapshot),
             cached_log_panel,
             input_panel,
-            status_bar,
-            hbox(std::move(shortcut_row)),
+            render_status_bar(
+                snapshot,
+                active_pane,
+                log_viewport,
+                cached_log_lines.size()),
+            render_shortcuts(
+                snapshot.running,
+                active_pane,
+                log_viewport.following_tail()),
         });
     });
 
     const auto exit_loop = app.ExitLoopClosure();
+    const auto sync_selected_block_to_viewport = [&] {
+        if (cached_block_starts.empty()) {
+            return;
+        }
+        const auto next = std::upper_bound(
+            cached_block_starts.begin(),
+            cached_block_starts.end(),
+            log_viewport.current_line());
+        const std::size_t block = next == cached_block_starts.begin()
+            ? 0
+            : static_cast<std::size_t>(
+                  std::distance(cached_block_starts.begin(), next) - 1);
+        if (selected_block != block) {
+            selected_block = block;
+            log_panel_dirty = true;
+        }
+    };
+    const auto advance_scroll = [&] {
+        // 按键当帧立即移动一次，剩余距离再由 animator 缓动。
+        // 单行滚动因此没有固定 32ms 的首帧延迟。
+        if (log_viewport.tick()) {
+            log_panel_dirty = true;
+            if (active_pane == ActivePane::Scrollback) {
+                sync_selected_block_to_viewport();
+            }
+        }
+        const bool pending = log_viewport.animation_pending();
+        scroll_animation_pending.store(pending);
+        if (pending) {
+            animation_cv.notify_one();
+        }
+    };
     const auto scroll_up = [&](std::size_t lines) {
-        scroll_animation_pending.store(log_viewport.scroll_up(lines));
-        animation_cv.notify_one();
+        (void)log_viewport.scroll_up(lines);
+        advance_scroll();
     };
     const auto scroll_down = [&](std::size_t lines) {
-        scroll_animation_pending.store(log_viewport.scroll_down(lines));
-        animation_cv.notify_one();
+        (void)log_viewport.scroll_down(lines);
+        advance_scroll();
     };
     const auto focus_selected_block = [&] {
         if (selected_block < cached_block_starts.size()) {
@@ -576,6 +312,9 @@ int run(
             // 使用距离相关步长向目标缓动，长距离滚动不会积压大量帧。
             if (log_viewport.tick()) {
                 log_panel_dirty = true;
+                if (active_pane == ActivePane::Scrollback) {
+                    sync_selected_block_to_viewport();
+                }
             }
             scroll_animation_pending.store(
                 log_viewport.animation_pending());
@@ -668,51 +407,42 @@ int run(
             (event == Event::Tab || event == Event::TabReverse)) {
             if (active_pane == ActivePane::Prompt && !log_blocks.empty()) {
                 active_pane = ActivePane::Scrollback;
-                const auto next = std::upper_bound(
-                    cached_block_starts.begin(),
-                    cached_block_starts.end(),
-                    log_viewport.current_line());
-                selected_block = next == cached_block_starts.begin()
-                    ? 0
-                    : static_cast<std::size_t>(
-                          std::distance(cached_block_starts.begin(), next) - 1);
-                focus_selected_block();
+                sync_selected_block_to_viewport();
             } else {
                 active_pane = ActivePane::Prompt;
+                input->TakeFocus();
             }
             log_panel_dirty = true;
             return true;
         }
 
-        if (running && event == Event::ArrowUp) {
+        if ((running || active_pane == ActivePane::Scrollback) &&
+            event == Event::ArrowUp) {
             scroll_up(1);
             return true;
         }
 
-        if (running && event == Event::ArrowDown) {
+        if ((running || active_pane == ActivePane::Scrollback) &&
+            event == Event::ArrowDown) {
             scroll_down(1);
             return true;
         }
 
         if (event == Event::ArrowUpCtrl) {
-            scroll_up(1);
+            if (!running && active_pane == ActivePane::Scrollback) {
+                select_previous_block();
+            } else {
+                scroll_up(1);
+            }
             return true;
         }
 
         if (event == Event::ArrowDownCtrl) {
-            scroll_down(1);
-            return true;
-        }
-
-        if (!running && active_pane == ActivePane::Scrollback &&
-            event == Event::ArrowUp) {
-            select_previous_block();
-            return true;
-        }
-
-        if (!running && active_pane == ActivePane::Scrollback &&
-            event == Event::ArrowDown) {
-            select_next_block();
+            if (!running && active_pane == ActivePane::Scrollback) {
+                select_next_block();
+            } else {
+                scroll_down(1);
+            }
             return true;
         }
 
@@ -726,6 +456,7 @@ int run(
                 exit_loop();
             } else {
                 task_input.clear();
+                input_cursor = 0;
                 prompt_history.cancel_navigation();
                 idle_ctrl_c_armed = true;
             }
@@ -737,9 +468,11 @@ int run(
                 session.request_stop();
             } else if (active_pane == ActivePane::Scrollback) {
                 active_pane = ActivePane::Prompt;
+                input->TakeFocus();
                 log_panel_dirty = true;
             } else {
                 task_input.clear();
+                input_cursor = 0;
                 prompt_history.cancel_navigation();
             }
             return true;
@@ -747,12 +480,20 @@ int run(
 
         if (!running && active_pane == ActivePane::Prompt &&
             event == Event::ArrowUp) {
-            return prompt_history.previous(task_input);
+            if (!prompt_history.previous(task_input)) {
+                return false;
+            }
+            input_cursor = static_cast<int>(task_input.size());
+            return true;
         }
 
         if (!running && active_pane == ActivePane::Prompt &&
             event == Event::ArrowDown) {
-            return prompt_history.next(task_input);
+            if (!prompt_history.next(task_input)) {
+                return false;
+            }
+            input_cursor = static_cast<int>(task_input.size());
+            return true;
         }
 
         if (event == Event::Return) {

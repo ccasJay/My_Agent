@@ -33,7 +33,8 @@ public:
     [[nodiscard]] std::size_t current_line() const noexcept;
     [[nodiscard]] bool following_tail() const noexcept;
     [[nodiscard]] bool animation_pending() const noexcept;
-    // 返回以当前行为中心的半开渲染区间 [begin, end)。
+    // 返回半开渲染区间 [begin, end)。暂停尾随后以当前行为
+    // 窗口下沿，使从最新日志向上滚动时每次都立即可见。
     [[nodiscard]] LogWindow render_window(
         std::size_t max_lines) const noexcept;
 
