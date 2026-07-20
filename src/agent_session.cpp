@@ -1,7 +1,5 @@
 #include "agent/agent_session.hpp"
-#include "agent/agent_event.hpp"
-#include "config/agent_loader.hpp"
-#include "model/model.hpp"
+#include "agent/agent_loop.hpp"
 
 #include <utility>
 
@@ -20,6 +18,16 @@ void AgentSession::clear() {
         .role = model::Role::System,
         .content = config_.system_prompt,
     });
+}
+
+AgentRunResult AgentSession::submit(
+    std::string user_message,
+    const AgentRunOptions& options) {
+    history_.push_back({
+        .role = model::Role::User,
+        .content = std::move(user_message),
+    });
+    return run(client_, config_, history_, options);
 }
 
 const model::MSG& AgentSession::history() const noexcept {

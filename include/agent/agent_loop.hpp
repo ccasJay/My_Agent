@@ -139,6 +139,7 @@ CommandDecision request_authorization(
  * @tparam P
  * @param provider
  * @param agent_cfg
+ * @param history 调用方持有的会话历史；循环会将模型输出和 observation 追加到其中
  * @return AgentRunResult
  * @note 初始history压入agent_cfg中的prompt -> last{} -> loop:
  *  [assistant 进 history -> 解析 RUN: -> COMPLETE_TASK 且有结论则结束;
@@ -148,11 +149,8 @@ template <model::Provider P>
 AgentRunResult run(
     P& provider,
     const config::AgentConfig& agent_cfg,
+    model::MSG& history,
     const AgentRunOptions& options = {}) {
-    model::MSG history;
-    history.push_back({model::Role::System, agent_cfg.system_prompt});
-    history.push_back({model::Role::User, agent_cfg.user_prompt});
-
     model::ModelResponse last{};
     std::size_t step = 0;
     AgentRunStatus status = AgentRunStatus::EmptyResponse;
@@ -309,6 +307,18 @@ AgentRunResult run(
         .response = std::move(last),
         .step = step,
     };
+}
+
+// 兼容一次性 Console 调用：由此重载创建初始历史，再交给可复用的核心循环。
+template <model::Provider P>
+AgentRunResult run(
+    P& provider,
+    const config::AgentConfig& agent_cfg,
+    const AgentRunOptions& options = {}) {
+    model::MSG history;
+    history.push_back({model::Role::System, agent_cfg.system_prompt});
+    history.push_back({model::Role::User, agent_cfg.user_prompt});
+    return run(provider, agent_cfg, history, options);
 }
 
 }  // namespace swe_agent::agent

@@ -1,0 +1,42 @@
+classDiagram
+    direction LR
+
+    class AgentSession {
+        -ModelClient& client_
+        -AgentConfig config_
+        -MSG history_
+        +AgentSession(ModelClient& client, AgentConfig config)
+        +submit(string user_message, AgentRunOptions options) AgentRunResult
+        +clear() void
+        +history() const MSG&
+    }
+
+    class ModelClient {
+        +query(MSG messages) ModelResponse
+    }
+
+    class AgentConfig {
+        +string system_prompt
+        +size_t step_limit
+    }
+
+    class MSG {
+        <<vector~Message~>>
+    }
+
+    class Message {
+        +Role role
+        +string content
+    }
+
+    class AgentRunOptions
+    class AgentRunResult
+
+    AgentSession --> "借用，不负责释放" ModelClient : client_
+    AgentSession *-- "按值持有" AgentConfig : config_
+    AgentSession *-- "按值持有" MSG : history_
+    MSG *-- "0..*" Message
+    AgentSession ..> AgentRunOptions : submit 参数
+    AgentSession ..> AgentRunResult : submit 返回
+
+    note for AgentSession "clear(): history_ 重置为一条 System Message\nsubmit(): 追加 User Message 后复用 history_"

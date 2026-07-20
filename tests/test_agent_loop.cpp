@@ -100,6 +100,24 @@ TEST_CASE("agent_loop stops on empty model content", "[agent_loop]") {
     REQUIRE(provider.seen_histories.size() == 1);
 }
 
+TEST_CASE("agent_loop appends to caller-owned history", "[agent_loop]") {
+    FakeProvider provider;
+    provider.responses = {"Conclusion: done\nRUN: echo COMPLETE_TASK\n"};
+    auto history = swe_agent::model::MSG{
+        {swe_agent::model::Role::System, "session system prompt"},
+        {swe_agent::model::Role::User, "previous task"},
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), history);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Completed);
+    REQUIRE(provider.seen_histories.size() == 1);
+    REQUIRE(provider.seen_histories.front().size() == 2);
+    REQUIRE(history.size() == 3);
+    REQUIRE(history.back().role == swe_agent::model::Role::Assistant);
+    REQUIRE(history.back().content.find("COMPLETE_TASK") != std::string::npos);
+}
+
 TEST_CASE("agent_loop nudges when RUN is missing then completes", "[agent_loop]") {
     FakeProvider provider;
     provider.responses = {

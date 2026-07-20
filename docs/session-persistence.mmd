@@ -1,0 +1,48 @@
+flowchart LR
+    subgraph Runtime["运行时层"]
+        ENTRY["TUI / Console"]
+        SESSION["AgentSession<br/>持有会话生命周期"]
+        HISTORY["history_: MSG<br/>System / User / Assistant / Tool"]
+        LOOP["Agent Loop<br/>读取并追加消息"]
+
+        ENTRY -->|"新建 / 提交 / 恢复"| SESSION
+        SESSION -->|"按值持有"| HISTORY
+        HISTORY -->|"传入可变引用"| LOOP
+        LOOP -->|"追加回复与工具结果"| HISTORY
+    end
+
+    subgraph Snapshot["持久化边界"]
+        SNAPSHOT["SessionSnapshot<br/>schema_version<br/>session_id<br/>title / model / workspace<br/>created_at / updated_at<br/>history"]
+    end
+
+    subgraph Storage["存储层"]
+        STORE["ISessionStore<br/>save / load / list / remove"]
+        JSON_STORE["JsonFileSessionStore"]
+        FILES[("sessions/session_id.json")]
+
+        STORE -->|"接口实现"| JSON_STORE
+        JSON_STORE -->|"原子写入"| FILES
+    end
+
+    SESSION -->|"生成快照"| SNAPSHOT
+    SNAPSHOT -->|"save"| STORE
+
+    FILES -->|"读取 JSON"| JSON_STORE
+    JSON_STORE -->|"反序列化"| SNAPSHOT
+    SNAPSHOT -->|"恢复 config 与 history"| SESSION
+
+    CHECKPOINT["保存时机<br/>初始化后<br/>追加 User 后<br/>Agent Loop 返回后"]
+    CHECKPOINT -.->|"触发"| SNAPSHOT
+
+    SECURITY["安全约束<br/>不保存 API Key<br/>文件权限仅当前用户<br/>限制历史与 Shell 输出大小"]
+    SECURITY -.-> FILES
+
+    classDef runtime fill:#E8F1FF,stroke:#3973AC,color:#102A43;
+    classDef snapshot fill:#FFF4D6,stroke:#B7791F,color:#5F370E;
+    classDef storage fill:#E6FFFA,stroke:#2C7A7B,color:#234E52;
+    classDef note fill:#F7FAFC,stroke:#718096,color:#2D3748,stroke-dasharray: 5 5;
+
+    class ENTRY,SESSION,HISTORY,LOOP runtime;
+    class SNAPSHOT snapshot;
+    class STORE,JSON_STORE,FILES storage;
+    class CHECKPOINT,SECURITY note;

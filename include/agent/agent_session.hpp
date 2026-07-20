@@ -6,6 +6,8 @@
 #include "model/message.hpp"
 #include "model/model.hpp"
 
+#include <string>
+
 namespace swe_agent::agent {
 
 // 核心会话骨架：持有模型客户端与 agent 配置，供后续挂 Loop / 审批策略。
@@ -15,7 +17,7 @@ public:
     AgentSession(
         model::ModelClient& client,
         config::AgentConfig config);
-    
+
     AgentRunResult submit(
         std::string user_message,
         const AgentRunOptions& options = {});
@@ -23,7 +25,7 @@ public:
     void clear();
 
     [[nodiscard]]
-    const model::MSG& history() const  noexcept;
+    const model::MSG& history() const noexcept;
 
 private:
     model::ModelClient& client_;
