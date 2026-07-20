@@ -17,6 +17,7 @@ add_executable(swe_agent_tests
     test_command_policy.cpp
     test_config.cpp
     test_agent_loop.cpp
+    test_agent_session.cpp
     test_cli.cpp
     test_log_block.cpp
     test_log_viewport.cpp

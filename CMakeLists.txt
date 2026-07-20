@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(FTXUI)
 
 add_library(swe_agent_core
     src/agent_loader.cpp
+    src/agent_session.cpp
     src/dotenv_loader.cpp
     src/http_client.cpp
     src/model_client.cpp
