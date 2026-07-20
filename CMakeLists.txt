@@ -38,6 +38,7 @@ add_library(swe_agent_core
     src/model_client.cpp
     src/process_result.cpp
     src/shell.cpp
+    src/command_policy.cpp
 )
 
 target_include_directories(swe_agent_core
