@@ -1,8 +1,11 @@
 #include "agent/agent_event.hpp"
+#include "agent/command_authorization.hpp"
+#include "agent/command_policy.hpp"
 #include "agent/session_manager.hpp"
 #include "agent/session_paths.hpp"
 #include "agent/sqlite_session_store.hpp"
 #include "app_cli/cli.hpp"
+#include "app_cli/command_review.hpp"
 #include "config/agent_loader.hpp"
 #include "config/dotenv_loader.hpp"
 #include "model/model.hpp"
@@ -13,6 +16,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace {
 
@@ -22,7 +26,7 @@ std::string find_env_path() {
             return path;
         }
     }
-    throw std::runtime_error{"Cannot find .env (tried .env and ../.env)"};
+    throw std::runtime_error{"找不到 .env（已尝试 .env 与 ../.env）。"};
 }
 
 std::string find_agent_path() {
@@ -31,7 +35,7 @@ std::string find_agent_path() {
             return path;
         }
     }
-    throw std::runtime_error{"Cannot find agent.yaml"};
+    throw std::runtime_error{"找不到 agent.yaml。"};
 }
 
 void print_agent_event(const swe_agent::agent::AgentEvent& event) {
@@ -39,41 +43,51 @@ void print_agent_event(const swe_agent::agent::AgentEvent& event) {
 
     switch (event.type) {
     case AgentEventType::Assistant:
-        std::cout << "================= step " << event.step
-                  << " (assistant) =================== \n"
+        std::cout << "================= 第 " << event.step
+                  << " 步（助手）=================== \n"
                   << event.content << '\n';
         break;
     case AgentEventType::FormatError:
-        std::cout << "================= step " << event.step
-                  << " (format error, continue) =================== \n"
+        std::cout << "================= 第 " << event.step
+                  << " 步（格式错误，继续执行）=================== \n"
                   << event.content << '\n';
         break;
     case AgentEventType::CommandStarted:
         break;
     case AgentEventType::CommandFinished:
         if (event.command == "echo COMPLETE_TASK") {
-            std::cout << "================= task complete =================== \n";
+            std::cout << "================= 任务完成 =================== \n";
         } else {
-            std::cout << "================= step " << event.step
-                      << " (observation) =================== \n";
+            std::cout << "================= 第 " << event.step
+                      << " 步（观察结果）=================== \n";
         }
         std::cout << event.content << '\n';
         break;
+    case AgentEventType::CommandRejected:
+        std::cerr << "命令已拒绝：\n$ " << event.command;
+        if (!event.rule_id.empty()) {
+            std::cerr << "\n规则：" << event.rule_id;
+        }
+        if (!event.content.empty()) {
+            std::cerr << "\n原因：" << event.content;
+        }
+        std::cerr << '\n';
+        break;
     case AgentEventType::Completed:
-        std::cout << "================= final =================== \n"
+        std::cout << "================= 最终结论 =================== \n"
                   << event.content;
         if (event.content.empty() || event.content.back() != '\n') {
             std::cout << '\n';
         }
         break;
     case AgentEventType::Stopped:
-        std::cout << "================= stopped ===================\n";
+        std::cout << "================= 已停止 ===================\n";
         break;
     case AgentEventType::StepLimitReached:
-        std::cout << "================= step limit reached ===================\n";
+        std::cout << "================= 已达到步骤上限 ===================\n";
         break;
     case AgentEventType::EmptyResponse:
-        std::cout << "================= empty response ===================\n";
+        std::cout << "================= 模型返回为空 ===================\n";
         break;
     }
 }
@@ -126,12 +140,32 @@ int main(int argc, char* argv[]) {
 
         swe_agent::agent::AgentRunOptions run_options;
         run_options.on_event = print_agent_event;
+        const bool interactive_console = ::isatty(STDIN_FILENO) != 0;
+        const swe_agent::agent::PolicyContext policy_context{
+            .working_dir = session_manager.workspace(),
+            .workspace_root = session_manager.workspace(),
+        };
+        run_options.authorizer = [policy_context, interactive_console](
+                                     const swe_agent::agent::CommandRequest& request) {
+            return swe_agent::agent::authorize_command(
+                request,
+                policy_context,
+                false,
+                [interactive_console](
+                    const swe_agent::agent::CommandRequest& review_request) {
+                    return swe_agent::app_cli::review_console_command(
+                        review_request,
+                        std::cin,
+                        std::cerr,
+                        interactive_console);
+                });
+        };
         (void)session_manager.submit(options.task, run_options);
         return 0;
     } catch (const CLI::ParseError& e) {
         return cli.exit(e);
     } catch (const std::exception& e) {
-        std::cerr << "error: " << e.what() << '\n';
+        std::cerr << "错误：" << e.what() << '\n';
         return 1;
     }
 }
