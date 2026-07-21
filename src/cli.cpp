@@ -6,6 +6,10 @@ Cli::Cli() {
     task_option_ =
         app_.add_option("-t", options_.task, "Task for non-interactive mode");
     app_.add_option("-m", options_.model, "Model name");
+    app_.add_flag(
+        "-c,--continue",
+        options_.continue_session,
+        "Continue the latest session in the current workspace");
 }
 
 Cli::RunOption Cli::parse(int argc, char* argv[]) {

@@ -1,5 +1,7 @@
 #include "agent/agent_event.hpp"
-#include "agent/agent_loop.hpp"
+#include "agent/session_manager.hpp"
+#include "agent/session_paths.hpp"
+#include "agent/sqlite_session_store.hpp"
 #include "app_cli/cli.hpp"
 #include "config/agent_loader.hpp"
 #include "config/dotenv_loader.hpp"
@@ -8,6 +10,7 @@
 #include "tui/tui.hpp"
 
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -102,14 +105,28 @@ int main(int argc, char* argv[]) {
         // 3) Provider 实现
         swe_agent::model::ModelClient client(env_config);
 
-        if (options.use_tui()) {
-            return swe_agent::tui::run(client, agent_cfg, env_config.model_name);
+        swe_agent::agent::SqliteSessionStore session_store{
+            swe_agent::agent::session_database_path()};
+        swe_agent::agent::SessionManager session_manager{
+            client,
+            agent_cfg,
+            session_store,
+            std::filesystem::canonical(std::filesystem::current_path()).string(),
+            env_config.model_name,
+        };
+        if (options.continue_session) {
+            (void)session_manager.continue_latest();
+        } else {
+            (void)session_manager.new_session();
         }
 
-        agent_cfg.user_prompt = options.task;
+        if (options.use_tui()) {
+            return swe_agent::tui::run(session_manager, env_config.model_name);
+        }
+
         swe_agent::agent::AgentRunOptions run_options;
         run_options.on_event = print_agent_event;
-        (void)swe_agent::agent::run(client, agent_cfg, run_options);
+        (void)session_manager.submit(options.task, run_options);
         return 0;
     } catch (const CLI::ParseError& e) {
         return cli.exit(e);

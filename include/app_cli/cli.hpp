@@ -10,6 +10,7 @@ public:
     struct RunOption {
         std::string task;
         std::string model;
+        bool continue_session{false};
         // 必须记录参数是否出现，不能用 task.empty() 区分 `-t ""` 与无 -t。
         bool task_provided{false};
 

@@ -53,3 +53,16 @@ TEST_CASE("CLI model override works in TUI and console modes", "[cli]") {
     REQUIRE_FALSE(console_options.use_tui());
     REQUIRE(console_options.model == "model-b");
 }
+
+TEST_CASE("CLI continue flag works in TUI and console modes", "[cli]") {
+    const auto tui_options = parse({"agent", "-c"});
+    REQUIRE(tui_options.use_tui());
+    REQUIRE(tui_options.continue_session);
+
+    const auto console_options =
+        parse({"agent", "--continue", "-t", "next task", "-m", "model-b"});
+    REQUIRE_FALSE(console_options.use_tui());
+    REQUIRE(console_options.continue_session);
+    REQUIRE(console_options.task == "next task");
+    REQUIRE(console_options.model == "model-b");
+}
