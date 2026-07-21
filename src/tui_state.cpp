@@ -153,12 +153,12 @@ void TuiState::apply_event(const agent::AgentEvent& event) {
         }
         std::string content = "$ " + event.command;
         if (!event.rule_id.empty()) {
-            content += "\n规则：" + event.rule_id;
+            content += "\nRule: " + event.rule_id;
         }
         if (!event.content.empty()) {
-            content += "\n原因：" + event.content;
+            content += "\nReason: " + event.content;
         }
-        append(TuiLogKind::System, "命令已拒绝", std::move(content));
+        append(TuiLogKind::System, "Command rejected", std::move(content));
         break;
     }
     case agent::AgentEventType::Completed:

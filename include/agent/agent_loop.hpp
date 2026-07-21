@@ -117,7 +117,7 @@ CommandDecision request_authorization(
     if (should_stop(options)) {
         return CommandDecision{
             .action = CommandAction::Stop,
-            .reason = "收到停止请求。",
+            .reason = "Stop requested.",
         };
     }
 
@@ -285,9 +285,9 @@ AgentRunResult run(
                 decision.reason,
                 *cmd,
                 decision.rule_id);
-            std::string rejection = "Host: 命令已拒绝。\n";
+            std::string rejection = "Host: command rejected.\n";
             if (!decision.reason.empty()) {
-                rejection += "原因：" + decision.reason + '\n';
+                rejection += "Reason: " + decision.reason + '\n';
             }
             append_history(
                 history,

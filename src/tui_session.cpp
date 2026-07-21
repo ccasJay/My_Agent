@@ -235,7 +235,7 @@ agent::CommandDecision TuiSession::authorize_command(
         if (stop_token.stop_requested()) {
             return {
                 .action = agent::CommandAction::Stop,
-                .reason = "收到停止请求。",
+                .reason = "Stop requested.",
             };
         }
     }
@@ -257,7 +257,7 @@ agent::CommandDecision TuiSession::authorize_command(
     if (stop_token.stop_requested()) {
         return {
             .action = agent::CommandAction::Stop,
-            .reason = "收到停止请求。",
+            .reason = "Stop requested.",
         };
     }
     return decision;
@@ -271,7 +271,7 @@ agent::CommandDecision TuiSession::review_command(
         if (stop_token.stop_requested()) {
             return {
                 .action = agent::CommandAction::Stop,
-                .reason = "收到停止请求。",
+                .reason = "Stop requested.",
             };
         }
         approval_decision_.reset();
@@ -289,7 +289,7 @@ agent::CommandDecision TuiSession::review_command(
     if (stop_token.stop_requested()) {
         decision = {
             .action = agent::CommandAction::Stop,
-            .reason = "收到停止请求。",
+            .reason = "Stop requested.",
         };
     } else {
         decision = std::move(*approval_decision_);

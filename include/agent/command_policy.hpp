@@ -32,7 +32,7 @@ struct PolicyResult {
  *
  * @param command 模型请求执行的命令文本。
  * @param context 当前工作目录及工作区根目录。
- * @return 包含策略动作、规则标识和中文原因的判定结果。
+ * @return 包含策略动作、规则标识和英文原因的判定结果。
  */
 PolicyResult evaluate_command_policy(
     std::string_view command,

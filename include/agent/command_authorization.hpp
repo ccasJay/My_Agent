@@ -14,7 +14,7 @@ namespace swe_agent::agent {
  * @param context 命令策略使用的工作区上下文。
  * @param review_all 是否连策略允许的命令也要求人工审核。
  * @param reviewer 可选的前端审核回调。
- * @return 包含规则标识和中文原因的最终决定。
+ * @return 包含规则标识和英文原因的最终决定。
  */
 CommandDecision authorize_command(
     const CommandRequest& request,

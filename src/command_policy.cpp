@@ -46,28 +46,30 @@ PolicyResult evaluate_command_policy(std::string_view command, const PolicyConte
         return {
             .action = PolicyAction::RequireReview,
             .rule_id = "empty-command",
-            .reason = "无法识别要执行的程序，需要人工审核。",
+            .reason = "Could not identify the program to run; human review is required.",
         };
     }
     if (kDeniedPrograms.contains(program)) {
         return {
             .action = PolicyAction::Deny,
             .rule_id = "denied-program",
-            .reason = "该命令直接调用了被禁止的高风险程序。",
+            .reason = "The command directly invokes a denied high-risk program.",
         };
     }
     if (has_complex_shell_syntax(command)) {
         return {
             .action = PolicyAction::RequireReview,
             .rule_id = "complex-shell-syntax",
-            .reason = "命令包含复杂 Shell 语法，无法安全自动审核。",
+            .reason =
+                "The command contains complex shell syntax and cannot be auto-approved safely.",
         };
     }
     if (kShellWrappers.contains(program)) {
         return {
             .action = PolicyAction::RequireReview,
             .rule_id = "shell-wrapper",
-            .reason = "命令通过 Shell 包装器间接执行，需要人工审核。",
+            .reason =
+                "The command runs indirectly through a shell wrapper; human review is required.",
         };
     }
     return {

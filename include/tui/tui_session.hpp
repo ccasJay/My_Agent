@@ -74,7 +74,7 @@ public:
     bool request_stop();
     // 提交当前待审批命令的决定；无待审批命令时返回 false。
     bool approve_command();
-    bool reject_command(std::string reason = "用户拒绝执行该命令。");
+    bool reject_command(std::string reason = "The user rejected this command.");
     // 运行中不允许切换，避免同一任务使用两套授权语义。
     bool toggle_command_mode();
     // Session switching is only valid while no task is running.

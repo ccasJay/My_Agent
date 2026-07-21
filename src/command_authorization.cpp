@@ -33,7 +33,8 @@ CommandDecision authorize_command(
         return {
             .action = CommandAction::Reject,
             .rule_id = policy.rule_id,
-            .reason = "需要人工审核，但当前没有可用的交互审核器。",
+            .reason =
+                "Human review is required, but no interactive reviewer is available.",
         };
     }
 
@@ -43,7 +44,7 @@ CommandDecision authorize_command(
             decision.rule_id = "user_rejected";
         }
         if (decision.reason.empty()) {
-            decision.reason = "用户拒绝执行该命令。";
+            decision.reason = "The user rejected this command.";
         }
         return decision;
     }

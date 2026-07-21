@@ -38,19 +38,21 @@ agent::CommandDecision review_console_command(
         return {
             .action = agent::CommandAction::Reject,
             .rule_id = "console_non_interactive",
-            .reason = "当前 Console 不是交互式终端，无法进行人工审核。",
+            .reason =
+                "Console is not an interactive terminal; human review is unavailable.",
         };
     }
 
     while (true) {
-        output << "命令需要人工审核：\n$ " << request.command
-               << "\n是否批准执行？[y/yes/n/no]：" << std::flush;
+        output << "Command requires human review:\n$ " << request.command
+               << "\nApprove execution? [y/yes/n/no]: " << std::flush;
         std::string answer;
         if (!std::getline(input, answer)) {
             return {
                 .action = agent::CommandAction::Reject,
                 .rule_id = "console_eof",
-                .reason = "交互式审核输入已结束，命令未获批准。",
+                .reason =
+                    "Interactive review input ended; the command was not approved.",
             };
         }
 
@@ -64,10 +66,10 @@ agent::CommandDecision review_console_command(
             return {
                 .action = agent::CommandAction::Reject,
                 .rule_id = "user_rejected",
-                .reason = "用户拒绝执行该命令。",
+                .reason = "The user rejected this command.",
             };
         }
-        output << "请输入 y、yes、n 或 no。\n";
+        output << "Please enter y, yes, n, or no.\n";
     }
 }
 

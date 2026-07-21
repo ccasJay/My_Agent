@@ -92,7 +92,7 @@ TEST_CASE("共享授权器保留审核器的停止决定", "[command-authorizati
         [](const swe_agent::agent::CommandRequest&) {
             return swe_agent::agent::CommandDecision{
                 .action = CommandAction::Stop,
-                .reason = "用户请求停止。",
+                .reason = "User requested stop.",
             };
         });
 

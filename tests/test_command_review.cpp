@@ -23,7 +23,7 @@ TEST_CASE("Console 命令审核接受肯定回答", "[command-review]") {
         make_request(), input, output, true);
 
     REQUIRE(decision.action == swe_agent::agent::CommandAction::Approve);
-    REQUIRE(output.str().find("是否批准") != std::string::npos);
+    REQUIRE(output.str().find("Approve execution") != std::string::npos);
 }
 
 TEST_CASE("Console 命令审核接受否定回答", "[command-review]") {
@@ -45,7 +45,7 @@ TEST_CASE("Console 命令审核会重试无效回答", "[command-review]") {
         make_request(), input, output, true);
 
     REQUIRE(decision.action == swe_agent::agent::CommandAction::Approve);
-    REQUIRE(output.str().find("请输入") != std::string::npos);
+    REQUIRE(output.str().find("Please enter") != std::string::npos);
 }
 
 TEST_CASE("Console 命令审核在输入结束时拒绝", "[command-review]") {
