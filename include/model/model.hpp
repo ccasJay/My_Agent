@@ -21,9 +21,9 @@ struct ModelConfig {
     std::string api_key;
     std::string model_name;
 };
-struct ModelClient {
+struct ModelClient : public IProvider {
     explicit ModelClient(const ModelConfig& config);
-    ModelResponse query(const MSG& messages); 
+    ModelResponse query(const MSG& messages) override;
 private:
     std::unique_ptr<IProvider> provider_;
 };

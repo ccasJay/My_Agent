@@ -41,6 +41,7 @@ FetchContent_MakeAvailable(FTXUI)
 add_library(swe_agent_core
     src/agent_loader.cpp
     src/agent_session.cpp
+    src/session_manager.cpp
     src/session_paths.cpp
     src/sqlite_session_store.cpp
     src/dotenv_loader.cpp
