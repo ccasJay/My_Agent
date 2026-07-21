@@ -5,6 +5,7 @@
 #include "config/agent_loader.hpp"
 #include "model/model.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -431,7 +432,8 @@ TEST_CASE("agent_loop feeds a rejected command back to the model", "[agent_loop]
         REQUIRE(request.command == "echo should-not-run");
         return CommandDecision{
             .action = CommandAction::Reject,
-            .reason = "Unsafe command",
+            .rule_id = "test-rejection",
+            .reason = "测试拒绝原因。",
         };
     };
     options.on_event = [&events](const AgentEvent& event) {
@@ -446,11 +448,23 @@ TEST_CASE("agent_loop feeds a rejected command back to the model", "[agent_loop]
     REQUIRE(history_has_role_content(
         provider.seen_histories[1],
         swe_agent::model::Role::User,
-        "command rejected by user"));
+        "命令已拒绝"));
     REQUIRE(history_has_role_content(
         provider.seen_histories[1],
         swe_agent::model::Role::User,
-        "Unsafe command"));
+        "测试拒绝原因"));
+    const auto rejected_events = std::count_if(
+        events.begin(), events.end(), [](const AgentEvent& event) {
+            return event.type == AgentEventType::CommandRejected;
+        });
+    REQUIRE(rejected_events == 1);
+    const auto rejection_event = std::find_if(
+        events.begin(), events.end(), [](const AgentEvent& event) {
+            return event.type == AgentEventType::CommandRejected;
+        });
+    REQUIRE(rejection_event->command == "echo should-not-run");
+    REQUIRE(rejection_event->rule_id == "test-rejection");
+    REQUIRE(rejection_event->content == "测试拒绝原因。");
     REQUIRE_FALSE(has_command_event(
         events, AgentEventType::CommandStarted, "echo should-not-run"));
     REQUIRE_FALSE(has_command_event(

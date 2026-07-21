@@ -50,6 +50,7 @@ add_library(swe_agent_core
     src/process_result.cpp
     src/shell.cpp
     src/command_policy.cpp
+    src/command_authorization.cpp
 )
 
 target_include_directories(swe_agent_core

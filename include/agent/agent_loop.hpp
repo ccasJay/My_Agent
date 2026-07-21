@@ -85,13 +85,15 @@ void emit_event(
     AgentEventType type,
     std::size_t step,
     std::string content = {},
-    std::string command = {}) {
+    std::string command = {},
+    std::string rule_id = {}) {
     if (options.on_event) {
         options.on_event(AgentEvent{
             .type = type,
             .step = step,
             .content = std::move(content),
             .command = std::move(command),
+            .rule_id = std::move(rule_id),
         });
     }
 }
@@ -115,7 +117,7 @@ CommandDecision request_authorization(
     if (should_stop(options)) {
         return CommandDecision{
             .action = CommandAction::Stop,
-            .reason = "Stop requested",
+            .reason = "收到停止请求。",
         };
     }
 
@@ -276,9 +278,16 @@ AgentRunResult run(
         }
 
         if (decision.action == CommandAction::Reject) {
-            std::string rejection = "Host: command rejected by user.\n";
+            emit_event(
+                options,
+                AgentEventType::CommandRejected,
+                step,
+                decision.reason,
+                *cmd,
+                decision.rule_id);
+            std::string rejection = "Host: 命令已拒绝。\n";
             if (!decision.reason.empty()) {
-                rejection += "Reason: " + decision.reason + '\n';
+                rejection += "原因：" + decision.reason + '\n';
             }
             append_history(
                 history,
