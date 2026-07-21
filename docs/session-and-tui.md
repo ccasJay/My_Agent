@@ -26,6 +26,33 @@ workspace 隔离，不会自动使用其他项目目录的记录。
 命令两侧空白会被去除。`/resume` 缺少参数、参数含空白或未知 `/` 命令会
 显示错误 notice。任务运行期间输入区不接受新的 Session 命令。
 
+## 信号轨界面
+
+TUI 使用适配浅色终端的信号轨布局：颜色仅辅助区分语义，固定符号和英文
+标签保证在没有颜色时仍可识别。日志标题使用以下映射：
+
+| 信号 | 日志类型 | 英文标签示例 |
+| --- | --- | --- |
+| `◆` | Task | `Task 1` |
+| `○` | Assistant | `Assistant` |
+| `›` | Command | `Command` |
+| `·` | Observation / System | `Observation` / `System` |
+| `✓` | Final | `Final` |
+| `!` | Error | `Error` |
+
+布局按终端宽度响应：
+
+| 宽度 | 档位 | 保留的信息 | 隐藏或缩减的信息 |
+| --- | --- | --- | --- |
+| `>=80` | Full | 顶栏品牌、模型、step、`Auto`/`Review` 与状态；状态栏模型、step、焦点、尾部跟随和行号；完整快捷键 | 无宽度降级 |
+| `56–79` | Compact | 顶栏品牌、`Auto`/`Review` 与状态；状态栏焦点、尾部跟随和行号；前三项快捷键 | 顶栏与状态栏的模型和 step |
+| `<56` | Minimal | 缩写品牌、明确的 `Auto`/`Review` 与状态、行号；前两项快捷键 | 模型、step、焦点、尾部跟随，以及其余快捷键 |
+
+空日志区显示开始任务的引导。空闲时输入区承载 Prompt；任务运行时该区域
+显示运行状态；等待授权时改为审批区。审批区固定使用 `Run this command?`，
+操作为 `Y allow`、`N reject`、`Esc stop`。命令输出仍可折叠，命令块标题以
+`running` 或 `done` 后缀显示其状态。
+
 ## 持久化数据
 
 SQLite 数据库文件名固定为 `agent.db`。路径优先级为：
@@ -97,7 +124,8 @@ TUI 初始模式是 `Review`，空闲时按 `Shift+Tab` 在两种模式间切换
 
 `TuiState` 先产生 Task、Assistant、Command、Observation、Final、System
 和 Error 语义日志。`TuiLogBlocks` 再把命令开始与对应结果合并为一个可折叠
-块：运行时展开，完成后自动折叠。Scrollback 获得焦点后可选择并切换块。
+块：运行时展开并标记 `running`，完成后自动折叠并标记 `done`。Scrollback
+获得焦点后可选择并切换块。
 
 `LogViewport` 只管理逻辑行、目标行和尾部跟随，不依赖 FTXUI。绘制层按
 终端宽度生成 UTF-8 安全的显示行，并只构建可见窗口。更详细的性能设计见
