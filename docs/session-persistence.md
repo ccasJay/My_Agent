@@ -1,5 +1,7 @@
 # Session 持久化
 
+[返回开发者文档入口](../README.md) · [当前 Session 与 TUI 指南](session-and-tui.md)
+
 ## 行为
 
 - `agent` 或 `agent -t "task"` 默认创建新 Session。
