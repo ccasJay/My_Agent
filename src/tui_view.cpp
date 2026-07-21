@@ -11,6 +11,30 @@
 namespace swe_agent::tui {
 namespace {
 
+ftxui::Color paper_color() {
+    return ftxui::Color::RGB(248, 250, 252);
+}
+
+ftxui::Color ink_color() {
+    return ftxui::Color::RGB(31, 41, 55);
+}
+
+ftxui::Color blueprint_color() {
+    return ftxui::Color::RGB(40, 84, 197);
+}
+
+ftxui::Color complete_color() {
+    return ftxui::Color::RGB(8, 127, 114);
+}
+
+ftxui::Color review_color() {
+    return ftxui::Color::RGB(150, 85, 0);
+}
+
+ftxui::Color failure_color() {
+    return ftxui::Color::RGB(180, 35, 58);
+}
+
 std::vector<std::string> wrap_log_line(
     std::string_view line,
     int max_width) {
@@ -53,6 +77,7 @@ void append_content_lines(
                 .text = std::move(row),
                 .kind = kind,
                 .block_index = block_index,
+                .role = LogLineRole::Content,
             });
         }
     }
@@ -60,36 +85,35 @@ void append_content_lines(
         lines.push_back({
             .kind = kind,
             .block_index = block_index,
+            .role = LogLineRole::Content,
         });
     }
 }
 
 ftxui::Color log_color(TuiLogKind kind) {
-    using ftxui::Color;
     switch (kind) {
-    case TuiLogKind::Task: return Color::Blue;
-    case TuiLogKind::Assistant: return Color::Cyan;
-    case TuiLogKind::Command: return Color::Yellow;
-    case TuiLogKind::Observation: return Color::White;
-    case TuiLogKind::Final: return Color::Green;
-    case TuiLogKind::System: return Color::Magenta;
-    case TuiLogKind::Error: return Color::Red;
+    case TuiLogKind::Task: return blueprint_color();
+    case TuiLogKind::Assistant: return ink_color();
+    case TuiLogKind::Command: return review_color();
+    case TuiLogKind::Observation: return ink_color();
+    case TuiLogKind::Final: return complete_color();
+    case TuiLogKind::System: return blueprint_color();
+    case TuiLogKind::Error: return failure_color();
     }
-    return Color::White;
+    return ink_color();
 }
 
 ftxui::Color status_color(TuiStatus status) {
-    using ftxui::Color;
     switch (status) {
-    case TuiStatus::Ready: return Color::Green;
-    case TuiStatus::Running: return Color::Cyan;
-    case TuiStatus::Stopping: return Color::Yellow;
+    case TuiStatus::Ready: return complete_color();
+    case TuiStatus::Running: return blueprint_color();
+    case TuiStatus::Stopping: return review_color();
     case TuiStatus::Stopped:
     case TuiStatus::StepLimitReached:
-    case TuiStatus::EmptyResponse: return Color::Yellow;
-    case TuiStatus::Error: return Color::Red;
+    case TuiStatus::EmptyResponse: return review_color();
+    case TuiStatus::Error: return failure_color();
     }
-    return Color::White;
+    return ink_color();
 }
 
 ftxui::Element shortcut(std::string key, std::string label) {
@@ -150,6 +174,29 @@ ftxui::Element block_cursor(ftxui::Element child) {
 
 }  // namespace
 
+TuiLayoutDensity tui_layout_density(int terminal_width) noexcept {
+    if (terminal_width >= 80) {
+        return TuiLayoutDensity::Full;
+    }
+    if (terminal_width >= 56) {
+        return TuiLayoutDensity::Compact;
+    }
+    return TuiLayoutDensity::Minimal;
+}
+
+std::string_view log_signal(TuiLogKind kind) noexcept {
+    switch (kind) {
+    case TuiLogKind::Task: return "◆";
+    case TuiLogKind::Assistant: return "○";
+    case TuiLogKind::Command: return "›";
+    case TuiLogKind::Observation:
+    case TuiLogKind::System: return "·";
+    case TuiLogKind::Final: return "✓";
+    case TuiLogKind::Error: return "!";
+    }
+    return "·";
+}
+
 RenderedLog make_log_lines(
     const std::vector<TuiLogBlock>& blocks,
     std::size_t first_block,
@@ -168,23 +215,27 @@ RenderedLog make_log_lines(
             .text = std::move(heading),
             .kind = block.kind,
             .block_index = i,
-            .heading = true,
+            .role = LogLineRole::Heading,
         });
 
+        bool has_content = false;
         if (!block.summary.empty()) {
             append_content_lines(
                 rendered.lines, block.summary, block.kind, i, max_width);
+            has_content = true;
         }
         if ((!block.foldable || block.expanded) && !block.detail.empty()) {
             append_content_lines(
                 rendered.lines, block.detail, block.kind, i, max_width);
-        } else if (block.summary.empty()) {
-            append_content_lines(
-                rendered.lines, block.detail, block.kind, i, max_width);
+            has_content = true;
+        }
+        if (!has_content) {
+            append_content_lines(rendered.lines, "", block.kind, i, max_width);
         }
         rendered.lines.push_back({
             .kind = block.kind,
             .block_index = i,
+            .role = LogLineRole::Gap,
         });
     }
     return rendered;
@@ -194,27 +245,40 @@ ftxui::Element render_log_panel(
     const std::vector<LogLine>& lines,
     LogWindow window,
     ActivePane active_pane,
-    std::size_t selected_block) {
+    std::size_t selected_block,
+    int terminal_width) {
     using namespace ftxui;
     Elements elements;
     if (lines.empty()) {
         elements.push_back(
-            text("Enter a task below to start the agent.") | dim | center);
+            text(truncate_to_width(
+                "Enter a task, or use /sessions to view sessions.",
+                std::max(terminal_width - 4, 1))) |
+            dim | center);
     } else {
         elements.reserve(window.end - window.begin);
         for (std::size_t i = window.begin; i < window.end; ++i) {
             const LogLine& log_line = lines[i];
-            Element line = log_line.heading
-                ? text("● " + log_line.text)
-                : text(log_line.text);
-            if (log_line.heading) {
+            const bool is_heading = log_line.role == LogLineRole::Heading;
+            Element line;
+            if (is_heading) {
+                line = text(std::string{log_signal(log_line.kind)} +
+                            " " + log_line.text);
+            } else if (log_line.role == LogLineRole::Content) {
+                line = text("│ " + log_line.text);
+            } else {
+                line = text("");
+            }
+            if (is_heading) {
                 line = line | bold | color(log_color(log_line.kind));
-            } else if (log_line.kind == TuiLogKind::Final) {
+            } else if (log_line.role == LogLineRole::Content &&
+                       log_line.kind == TuiLogKind::Final) {
                 line = line | bold;
-            } else if (log_line.kind == TuiLogKind::System) {
+            } else if (log_line.role == LogLineRole::Content &&
+                       log_line.kind == TuiLogKind::System) {
                 line = line | dim;
             }
-            if (active_pane == ActivePane::Scrollback && log_line.heading &&
+            if (active_pane == ActivePane::Scrollback && is_heading &&
                 log_line.block_index == selected_block) {
                 line = line | inverted;
             }
@@ -222,10 +286,10 @@ ftxui::Element render_log_panel(
         }
     }
 
-    Element panel = vbox(std::move(elements)) | flex;
+    Element panel = vbox(std::move(elements)) | flex | bgcolor(paper_color());
     return active_pane == ActivePane::Scrollback
-        ? panel | borderStyled(Color::Cyan)
-        : panel | border;
+        ? panel | borderStyled(blueprint_color())
+        : panel | borderStyled(ink_color());
 }
 
 ftxui::Element render_run_panel(
@@ -237,8 +301,8 @@ ftxui::Element render_run_panel(
     using namespace ftxui;
     const bool command_activity = snapshot.activity_text.starts_with("Run ");
     const Color activity_color = snapshot.status == TuiStatus::Stopping
-        ? Color::Red
-        : command_activity ? Color::Green : Color::Cyan;
+        ? failure_color()
+        : command_activity ? complete_color() : blueprint_color();
     const std::string phase_elapsed =
         format_run_duration(animation.phase_elapsed(now));
     const std::string turn_elapsed =
@@ -273,7 +337,8 @@ ftxui::Element render_run_panel(
         if (command_activity && activity.starts_with("Run ")) {
             elements.push_back(text(" Run ") | dim);
             elements.push_back(
-                text(activity.substr(4)) | color(Color::Yellow) | bold);
+                text(activity.substr(std::string{"Run "}.size())) |
+                color(review_color()) | bold);
         } else {
             elements.push_back(
                 text(" " + activity) | color(activity_color) | bold);
@@ -286,7 +351,8 @@ ftxui::Element render_run_panel(
     if (!right_text.empty()) {
         elements.push_back(text(right_text) | dim);
     }
-    return hbox(std::move(elements)) | border;
+    return hbox(std::move(elements)) | borderStyled(blueprint_color()) |
+        bgcolor(paper_color());
 }
 
 ftxui::Element render_approval_panel(
@@ -299,22 +365,20 @@ ftxui::Element render_approval_panel(
         command_width);
     return vbox({
         hbox({
-            text(" ? ") | bold | color(Color::Yellow),
-            text("Approve this command?") | bold,
+            text(" ! ") | bold | color(review_color()),
+            text("Run this command?") | bold,
         }),
         hbox({
             text(" $ ") | dim,
-            text(command) | color(Color::Yellow),
+            text(command) | color(review_color()),
         }),
         hbox({
-            text(" Y ") | bold | color(Color::Green),
-            text("allow  ") | dim,
-            text(" N ") | bold | color(Color::Red),
-            text("reject  ") | dim,
+            text(" Y allow ") | bold | color(complete_color()),
+            text(" N reject ") | bold | color(failure_color()),
             filler(),
             text("Esc stop ") | dim,
         }),
-    }) | borderStyled(Color::Yellow);
+    }) | borderStyled(review_color()) | bgcolor(paper_color());
 }
 
 ftxui::Element render_prompt_panel(
@@ -324,7 +388,7 @@ ftxui::Element render_prompt_panel(
     std::string_view placeholder) {
     using namespace ftxui;
     Element prompt = hbox({
-        text(" ❯ ") | bold | color(Color::Cyan),
+        text(" ❯ ") | bold | color(blueprint_color()),
         active_pane == ActivePane::Prompt
             ? block_cursor(input->Render()) | flex
             : text(task_input.empty() ? std::string{placeholder}
@@ -332,57 +396,70 @@ ftxui::Element render_prompt_panel(
                 flex | dim,
     });
     return active_pane == ActivePane::Prompt
-        ? prompt | borderStyled(Color::Cyan)
-        : prompt | border;
+        ? prompt | borderStyled(blueprint_color())
+        : prompt | borderStyled(ink_color());
 }
 
-ftxui::Element render_header(const TuiSnapshot& snapshot) {
+ftxui::Element render_header(
+    const TuiSnapshot& snapshot,
+    int terminal_width) {
     using namespace ftxui;
-    const Element status = snapshot.running
-        ? text("")
-        : text("● " + snapshot.status_text + " ") |
-            bold | color(status_color(snapshot.status));
-    return hbox({
-        text(" SWE Agent") | bold | color(Color::Cyan),
-        filler(),
-        status,
-    });
+    const TuiLayoutDensity density = tui_layout_density(terminal_width);
+    const std::string brand = density == TuiLayoutDensity::Minimal
+        ? "SWΞ"
+        : "SWΞ / AGENT";
+    const Element status = text("● " + snapshot.status_text) |
+        bold | color(status_color(snapshot.status));
+    Elements header{
+        text(" " + brand + " ") | bold | color(blueprint_color()),
+    };
+    if (density == TuiLayoutDensity::Full) {
+        header.push_back(text("Model ") | dim);
+        header.push_back(text(snapshot.model_name) | bold | color(ink_color()));
+        header.push_back(text("  Step " + std::to_string(snapshot.step)) | dim);
+    }
+    header.push_back(filler());
+    const Color mode_color = snapshot.command_mode == CommandMode::Auto
+        ? complete_color()
+        : review_color();
+    if (density == TuiLayoutDensity::Minimal) {
+        header.push_back(text(std::string{command_mode_name(snapshot.command_mode)} + " ") |
+                         bold | color(mode_color));
+    } else {
+        header.push_back(text("Mode ") | bold | color(mode_color));
+        header.push_back(text(std::string{command_mode_name(snapshot.command_mode)} + "  ") | dim);
+    }
+    header.push_back(status);
+    return hbox(std::move(header)) | bgcolor(paper_color());
 }
 
 ftxui::Element render_status_bar(
     const TuiSnapshot& snapshot,
     ActivePane active_pane,
     const LogViewport& viewport,
-    std::size_t line_count) {
+    std::size_t line_count,
+    int terminal_width) {
     using namespace ftxui;
-    return hbox({
-        text(" model ") | dim,
-        text(snapshot.model_name) | bold,
-        text("  │  ") | dim,
-        text("step ") | dim,
-        text(std::to_string(snapshot.step)) | bold,
-        text("  │  ") | dim,
-        text("mode ") | dim,
-        text(std::string{command_mode_name(snapshot.command_mode)}) |
-            bold |
-            color(snapshot.command_mode == CommandMode::Auto
-                      ? Color::Green
-                      : Color::Yellow),
-        filler(),
-        text(active_pane == ActivePane::Prompt
-                 ? "prompt  │  "
-                 : "scrollback  │  ") |
-            dim,
-        text(viewport.following_tail()
-                 ? "following latest "
-                 : "scroll paused ") |
-            dim,
-        line_count == 0
-            ? text("")
-            : text(std::to_string(viewport.current_line() + 1) + "/" +
-                   std::to_string(line_count) + " ") |
-                dim,
-    });
+    const TuiLayoutDensity density = tui_layout_density(terminal_width);
+    Elements status;
+    if (density == TuiLayoutDensity::Full) {
+        status.push_back(text("Model " + snapshot.model_name + "  Step " +
+                              std::to_string(snapshot.step)) | dim);
+    }
+    if (density != TuiLayoutDensity::Minimal) {
+        status.push_back(text(active_pane == ActivePane::Prompt
+                                  ? "Prompt  │  "
+                                  : "Scrollback  │  ") | dim);
+        status.push_back(text(viewport.following_tail()
+                                  ? "Following latest"
+                                  : "Scroll paused") | dim);
+    }
+    status.push_back(filler());
+    if (line_count != 0) {
+        status.push_back(text(std::to_string(viewport.current_line() + 1) +
+                              "/" + std::to_string(line_count)) | dim);
+    }
+    return hbox(std::move(status)) | bgcolor(paper_color());
 }
 
 ftxui::Element render_shortcuts(
@@ -390,7 +467,8 @@ ftxui::Element render_shortcuts(
     bool awaiting_approval,
     CommandMode command_mode,
     ActivePane active_pane,
-    bool following_tail) {
+    bool following_tail,
+    int terminal_width) {
     using namespace ftxui;
     Elements hints;
     if (awaiting_approval) {
@@ -432,14 +510,20 @@ ftxui::Element render_shortcuts(
         hints.push_back(shortcut("End", "latest"));
     }
 
+    const TuiLayoutDensity density = tui_layout_density(terminal_width);
+    const std::size_t hint_limit = density == TuiLayoutDensity::Full
+        ? hints.size()
+        : density == TuiLayoutDensity::Compact
+        ? std::min<std::size_t>(hints.size(), 3)
+        : std::min<std::size_t>(hints.size(), 2);
     Elements row;
-    for (std::size_t i = 0; i < hints.size(); ++i) {
+    for (std::size_t i = 0; i < hint_limit; ++i) {
         if (i > 0) {
             row.push_back(text("  │  ") | dim);
         }
         row.push_back(std::move(hints[i]));
     }
-    return hbox(std::move(row));
+    return hbox(std::move(row)) | bgcolor(paper_color());
 }
 
 }  // namespace swe_agent::tui

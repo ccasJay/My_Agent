@@ -195,8 +195,9 @@ int run(
         cached_log_lines.resize(first_line);
         cached_block_starts.resize(first_block);
 
-        // 边框占两列；在进入 viewport 前生成真实可滚动的显示行。
-        const int content_width = std::max(cached_terminal_width - 2, 1);
+        // 边框占两列，内容信号轨 `│ ` 再占两列；在进入 viewport 前
+        // 生成真实可滚动的显示行，避免刚好填满时被右边框裁切。
+        const int content_width = std::max(cached_terminal_width - 4, 1);
         RenderedLog rendered = make_log_lines(
             log_blocks.blocks(),
             first_block,
@@ -277,7 +278,8 @@ int run(
                 cached_log_lines,
                 log_viewport.render_window(render_limit),
                 active_pane,
-                selected_block);
+                selected_block,
+                cached_terminal_width);
             log_panel_dirty = false;
         }
 
@@ -297,20 +299,22 @@ int run(
                   kPromptPlaceholder);
 
         return vbox({
-            render_header(snapshot),
+            render_header(snapshot, cached_terminal_width),
             cached_log_panel,
             input_panel,
             render_status_bar(
                 snapshot,
                 active_pane,
                 log_viewport,
-                cached_log_lines.size()),
+                cached_log_lines.size(),
+                cached_terminal_width),
             render_shortcuts(
                 snapshot.running,
                 snapshot.awaiting_approval,
                 snapshot.command_mode,
                 active_pane,
-                log_viewport.following_tail()),
+                log_viewport.following_tail(),
+                cached_terminal_width),
         });
     });
 

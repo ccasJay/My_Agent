@@ -9,11 +9,11 @@ namespace swe_agent::tui {
 std::string_view command_mode_name(CommandMode mode) noexcept {
     switch (mode) {
     case CommandMode::Auto:
-        return "auto";
+        return "Auto";
     case CommandMode::Review:
-        return "review";
+        return "Review";
     }
-    return "unknown";
+    return "Unknown";
 }
 
 TuiSession::TuiSession(
