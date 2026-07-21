@@ -19,9 +19,9 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <mutex>
@@ -29,7 +29,6 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <utility>
 #include <vector>
 
 namespace swe_agent::tui {
@@ -83,6 +82,7 @@ int run(
         }
     };
 
+    const std::filesystem::path workspace_root{session_manager.workspace()};
     TuiSession session{
         model_name,
         [&session_manager](
@@ -91,6 +91,11 @@ int run(
             return session_manager.submit(task, options);
         },
         post_refresh,
+        agent::PolicyContext{
+            // 当前 shell 无独立 cwd；与 workspace 对齐，供后续路径规则使用。
+            .working_dir = workspace_root,
+            .workspace_root = workspace_root,
+        },
     };
     (void)session.load_session(session_manager.active_snapshot());
 

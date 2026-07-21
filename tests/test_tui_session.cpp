@@ -10,6 +10,17 @@
 #include <string>
 #include <thread>
 
+namespace {
+
+swe_agent::agent::PolicyContext test_policy_context() {
+    return {
+        .working_dir = "/tmp/project",
+        .workspace_root = "/tmp/project",
+    };
+}
+
+}  // namespace
+
 TEST_CASE("TUI session runs a task and exposes a consistent snapshot", "[tui][session]") {
     std::mutex notification_mutex;
     std::condition_variable notification;
@@ -35,6 +46,7 @@ TEST_CASE("TUI session runs a task and exposes a consistent snapshot", "[tui][se
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("task"));
@@ -97,6 +109,7 @@ TEST_CASE("TUI session stop is cooperative and idempotent", "[tui][session]") {
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("task"));
@@ -157,6 +170,7 @@ TEST_CASE("TUI session stays busy until the runner returns", "[tui][session]") {
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("first task"));
@@ -212,6 +226,7 @@ TEST_CASE("TUI session approves a pending command", "[tui][session][authorizatio
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("task"));
@@ -267,6 +282,7 @@ TEST_CASE("TUI session auto mode bypasses command review", "[tui][session][autho
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.command_mode() == CommandMode::Review);
@@ -300,11 +316,12 @@ TEST_CASE("TUI session rejects a pending command", "[tui][session][authorization
     std::condition_variable notification;
     CommandDecision received{.action = CommandAction::Approve};
 
+    // 使用未列入 deny 的命令，才能走到人工 Reject 路径。
     swe_agent::tui::TuiSession session{
         "test-model",
         [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
             received = options.authorizer(CommandRequest{
-                .command = "rm example.txt",
+                .command = "echo example.txt",
             });
             return AgentRunResult{
                 .status = AgentRunStatus::Completed,
@@ -315,6 +332,7 @@ TEST_CASE("TUI session rejects a pending command", "[tui][session][authorization
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("task"));
@@ -338,6 +356,54 @@ TEST_CASE("TUI session rejects a pending command", "[tui][session][authorization
     const auto snapshot = session.snapshot(0);
     REQUIRE_FALSE(snapshot.awaiting_approval);
     REQUIRE(snapshot.new_logs.back().heading == "Command rejected");
+}
+
+TEST_CASE(
+    "TUI session policy denies dangerous commands without approval UI",
+    "[tui][session][authorization][policy]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+    using swe_agent::tui::CommandMode;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{.action = CommandAction::Approve};
+
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .command = "rm example.txt",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Completed,
+                .response = {},
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+        test_policy_context(),
+    };
+
+    REQUIRE(session.toggle_command_mode());
+    REQUIRE(session.command_mode() == CommandMode::Auto);
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Reject);
+    REQUIRE_FALSE(received.reason.empty());
+    REQUIRE_FALSE(session.snapshot(0).awaiting_approval);
 }
 
 TEST_CASE("TUI session stop releases command approval", "[tui][session][authorization]") {
@@ -366,6 +432,7 @@ TEST_CASE("TUI session stop releases command approval", "[tui][session][authoriz
             std::lock_guard lock{notification_mutex};
             notification.notify_all();
         },
+        test_policy_context(),
     };
 
     REQUIRE(session.start("task"));
@@ -395,6 +462,7 @@ TEST_CASE("TUI session can replace idle logs from storage", "[tui][session]") {
             return swe_agent::agent::AgentRunResult{};
         },
         [] {},
+        test_policy_context(),
     };
     const swe_agent::agent::SessionSnapshot restored{
         .metadata = {

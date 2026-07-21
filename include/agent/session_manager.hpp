@@ -66,6 +66,11 @@ public:
     [[nodiscard]] AgentSession& active_session();
     [[nodiscard]] const AgentSession& active_session() const;
 
+    /**
+     * @brief 当前 workspace 根路径（与 Session 持久化分区一致）
+     */
+    [[nodiscard]] const std::string& workspace() const noexcept;
+
 private:
     model::IProvider& provider_;
     config::AgentConfig config_;

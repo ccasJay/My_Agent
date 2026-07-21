@@ -2,6 +2,7 @@
 
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
+#include "agent/command_policy.hpp"
 #include "tui/tui_state.hpp"
 
 #include <condition_variable>
@@ -60,6 +61,7 @@ public:
         std::string model_name,
         TaskRunner runner,
         Notify notify,
+        agent::PolicyContext policy_context,
         CommandMode command_mode = CommandMode::Review);
     ~TuiSession();
 
@@ -108,6 +110,8 @@ private:
     agent::StopSource stop_source_;
     std::optional<agent::CommandDecision> approval_decision_;
     CommandMode command_mode_{CommandMode::Review};
+    // 构造时注入，进程内不变；authorize_command 只读，不必进 mutex_。
+    agent::PolicyContext policy_context_;
 };
 
 }  // namespace swe_agent::tui

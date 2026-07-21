@@ -20,11 +20,13 @@ TuiSession::TuiSession(
     std::string model_name,
     TaskRunner runner,
     Notify notify_callback,
+    agent::PolicyContext policy_context,
     CommandMode command_mode)
     : state_(std::move(model_name)),
       runner_(std::move(runner)),
       notify_(std::move(notify_callback)),
-      command_mode_(command_mode) {
+      command_mode_(command_mode),
+      policy_context_(std::move(policy_context)) {
     if (!runner_) {
         throw std::invalid_argument{"TuiSession requires a task runner"};
     }
@@ -236,7 +238,31 @@ agent::CommandDecision TuiSession::authorize_command(
                 .reason = "Stop requested",
             };
         }
-        if (command_mode_ == CommandMode::Auto) {
+    }
+
+    // policy_context_ 只读且构造后不变，可在锁外评估。
+    const agent::PolicyResult policy =
+        agent::evaluate_command_policy(request.command, policy_context_);
+    if (policy.action == agent::PolicyAction::Deny) {
+        return {
+            .action = agent::CommandAction::Reject,
+            .reason = policy.reason.empty()
+                ? std::string{"Denied by command policy"}
+                : policy.reason,
+        };
+    }
+
+    {
+        std::lock_guard lock{mutex_};
+        if (stop_token.stop_requested()) {
+            return {
+                .action = agent::CommandAction::Stop,
+                .reason = "Stop requested",
+            };
+        }
+        // Auto 仅在 policy Allow 时直批；RequireReview 仍走人工审批。
+        if (command_mode_ == CommandMode::Auto &&
+            policy.action == agent::PolicyAction::Allow) {
             return {
                 .action = agent::CommandAction::Approve,
             };

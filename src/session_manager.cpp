@@ -18,6 +18,10 @@ SessionManager::SessionManager(
       workspace_(std::move(workspace)),
       model_name_(std::move(model_name)) {}
 
+const std::string& SessionManager::workspace() const noexcept {
+    return workspace_;
+}
+
 AgentSession& SessionManager::new_session() {
     active_ = std::make_unique<AgentSession>(AgentSession::create(
         provider_,
