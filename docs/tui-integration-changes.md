@@ -40,6 +40,10 @@ agent -t "run tests" -m "model-name"
 界面使用面向浅色终端的信号轨，而非普通单列边框。颜色只辅助语义；每种
 日志都有不依赖颜色的固定信号与英文标题：Task 为 `◆`，Assistant 为 `○`，
 Command 为 `›`，Observation 与 System 为 `·`，Final 为 `✓`，Error 为 `!`。
+实现使用六色浅色调色板：纸面 `#F8FAFC`、墨色 `#1F2937`、蓝图 `#2854C5`、
+完成 `#087F72`、审核 `#965500`、故障 `#B4233A`。蓝图承载结构信号，墨色
+承载 Assistant/Observation，审核标识 Command，完成标识 Final，故障标识
+Error；状态与审批操作复用这些语义色。
 
 界面由以下区域组成：
 
