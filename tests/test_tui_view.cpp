@@ -9,9 +9,18 @@
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
+
+constexpr std::string_view kCjkEmojiContent =
+    "\xE4\xBF\xAE\xE5\xA4\x8D\xE7\x95\x8C\xE9\x9D\xA2"
+    "\xF0\x9F\x99\x82\xE5\xB9\xB6\xE4\xBF\x9D\xE7\x95\x99"
+    "\xE7\xBB\x88\xE6\x80\x81\xF0\x9F\x9A\x80";
+constexpr std::string_view kCjkEmojiModelPrefix =
+    "\xE8\xB6\x85\xE9\x95\xBF\xE6\xA8\xA1\xE5\x9E\x8B"
+    "\xF0\x9F\x99\x82";
 
 std::string render_to_text(ftxui::Element element, int width, int height) {
     ftxui::Screen screen(width, height);
@@ -227,7 +236,7 @@ TEST_CASE("UTF-8 newlines produce content rows", "[tui][view]") {
 }
 
 TEST_CASE("CJK and emoji wrap without exceeding or losing content", "[tui][view]") {
-    const std::string content = "修复界面🙂并保留终态🚀";
+    const std::string content{kCjkEmojiContent};
     const std::vector<swe_agent::tui::TuiLogBlock> blocks{{
         .kind = TuiLogKind::Assistant,
         .heading = "Analysis",
@@ -283,15 +292,15 @@ TEST_CASE("minimal header uses the abbreviated brand", "[tui][view]") {
 
 TEST_CASE("full header reserves mode and longest status from a long UTF-8 model", "[tui][view]") {
     auto snapshot = snapshot_for_view();
-    snapshot.model_name =
-        "超长模型🙂-with-a-name-that-must-not-displace-critical-fields";
+    snapshot.model_name = std::string{kCjkEmojiModelPrefix} +
+        "-with-a-name-that-must-not-displace-critical-fields";
     snapshot.status = swe_agent::tui::TuiStatus::StepLimitReached;
     snapshot.status_text = "Step limit reached";
 
     const std::string rendered = render_to_text(
         swe_agent::tui::render_header(snapshot, 80), 80, 1);
 
-    REQUIRE(rendered.find("超长模型🙂") != std::string::npos);
+    REQUIRE(rendered.find(kCjkEmojiModelPrefix) != std::string::npos);
     REQUIRE(rendered.find("…") != std::string::npos);
     REQUIRE(rendered.find("Review") != std::string::npos);
     REQUIRE(rendered.find("Step limit reached") != std::string::npos);
