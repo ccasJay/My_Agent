@@ -37,8 +37,8 @@ cmake --build build --parallel 2
 ./build/agent
 ```
 
-仓库已提供 [`config/agent.yaml`](config/agent.yaml)。其中的 `agent.user`
-是默认用户任务，启动时不能为空。
+仓库已提供 [`config/agent.yaml`](config/agent.yaml)。加载器要求其中的
+`agent.user` 非空；当前 CLI/TUI 实际提交的任务来自输入框或 `-t` 参数。
 
 ## 使用方式
 

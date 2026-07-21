@@ -39,8 +39,8 @@ OPENAI_MODEL=your-model
 Completions 请求的完整 endpoint。
 
 仓库中的 [`config/agent.yaml`](../config/agent.yaml) 定义 System Prompt、
-默认 User Prompt 和 step limit。首次运行前至少确认 `agent.user` 符合当前
-用途；完整字段见[配置参考](configuration.md)。
+加载器要求的 User Prompt 和 step limit。当前 CLI/TUI 的实际任务来自输入
+或 `-t`；`agent.user` 仍必须非空。完整字段见[配置参考](configuration.md)。
 
 ## 配置与构建
 

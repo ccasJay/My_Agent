@@ -32,7 +32,8 @@ OPENAI_MODEL=your-model
 ```
 
 dotenv 加载器忽略空行和以 `#` 开头的行，以第一个 `=` 分隔键和值，并会
-去掉键和值两侧的空白。它不实现变量展开、引号解码或多行值。
+去掉键和值两侧的空白。值被一对匹配的单引号或双引号包围时，加载器会
+去掉外层引号；它不实现变量展开、转义序列解码或多行值。
 
 ## `config/agent.yaml`
 
@@ -41,7 +42,7 @@ dotenv 加载器忽略空行和以 `#` 开头的行，以第一个 `=` 分隔键
 | 字段 | 必需 | 当前用途 |
 | --- | --- | --- |
 | `agent.system` | 否 | 新 Session 的 System Prompt；缺失时为空字符串 |
-| `agent.user` | 是 | Agent 配置中的默认 User Prompt；不能为空 |
+| `agent.user` | 是 | 加载器要求非空；便捷版 `agent::run()` 可用作初始 User Prompt |
 | `agent.step_limit` | 否 | 最大循环步数；默认值为 1，`0` 表示不限制 |
 | `model.model_name` | 否 | 会被解析到 `AgentConfig`，但当前入口没有用它覆盖运行模型 |
 
@@ -59,6 +60,11 @@ agent:
 仓库默认配置还约定模型以单独一行 `RUN: <command>` 请求本地命令，并以
 带有非空结论的 `RUN: echo COMPLETE_TASK` 完成任务。这个约定由
 [Agent Loop](agent-loop.md)实现。
+
+当前 `main()` 通过持久化 `AgentSession` 运行任务，实际 User Prompt 来自
+TUI 输入或 CLI `-t`，不会自动提交 `agent.user`。该字段仍因加载器校验而
+必须非空，并会被不带外部 history 的 `agent::run(provider, config)` 便捷
+重载使用。
 
 ### `model.model_name` 的当前状态
 
@@ -83,7 +89,8 @@ YAML 的该字段改变实际请求模型。这是当前实现边界，不是配
 
 ```text
 运行模型：OPENAI_MODEL -> CLI -m（若非空）
-Prompt/步数：config/agent.yaml
+System Prompt/步数：config/agent.yaml
+任务文本：TUI 输入或 CLI -t
 启动模式：是否出现 -t
 Session：默认新建；出现 -c 时恢复当前工作区最新记录
 ```

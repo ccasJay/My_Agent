@@ -327,7 +327,7 @@ git commit -m "docs: 添加模块与源码导读"
 在 `docs/session-persistence.md` 和 `docs/tui-integration-changes.md` 开头各添加一段简短说明，链接到：
 
 ```markdown
-[返回开发者文档入口](../README.md) · [当前 Session 与 TUI 指南](session-and-tui.md)
+返回开发者文档入口：../README.md · 当前 Session 与 TUI 指南：session-and-tui.md
 ```
 
 不得重写现有专题历史，也不得更新其中的历史测试计数来冒充当前结果。
