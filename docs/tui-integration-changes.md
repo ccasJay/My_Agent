@@ -1,5 +1,7 @@
 # FTXUI TUI 集成与 Agent Loop 事件化更改说明
 
+[返回开发者文档入口](../README.md) · [当前 Session 与 TUI 指南](session-and-tui.md)
+
 更新日期：2026-07-18
 
 ## 1. 更改概述
