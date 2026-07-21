@@ -341,7 +341,7 @@ export PATH="$HOME/.local/bin:$PATH"
 | `RequireReview` | 请求审核 | 请求审核 | 请求审核 | 拒绝 |
 | `Deny` | 拒绝 | 拒绝 | 拒绝 | 拒绝 |
 
-- 直接调用 `rm`、`shutdown`、`reboot` 及其绝对路径会被拒绝，不能被任何前端覆盖。
+- 直接调用 `rm`、`rmdir`、`shutdown`、`reboot` 及其绝对路径会被拒绝，不能被任何前端覆盖。
 - 包含命令分隔符、逻辑运算符、管道、重定向、命令替换、换行或 `sudo`、`sh`、`bash`、`zsh` 包装器的命令会要求人工审核。
 - Console 仅在标准输入为 TTY 时请求 `y`/`yes` 或 `n`/`no`；无交互终端不会等待输入，输入结束同样拒绝。
 - 每次拒绝都会产生一个 `CommandRejected` 事件：TUI 与 Console 各展示一次命令、规则标识和原因；Agent Loop 同时将中文拒绝原因作为 Observation 返回给模型。

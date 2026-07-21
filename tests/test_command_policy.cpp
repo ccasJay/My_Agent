@@ -34,11 +34,13 @@ TEST_CASE("command policy denies configured programs", "[command-policy]") {
     using swe_agent::agent::PolicyAction;
     using swe_agent::agent::evaluate_command_policy;
 
-    constexpr std::array<std::string_view, 4> commands{
+    constexpr std::array<std::string_view, 6> commands{
         "reboot",
         "shutdown now",
         "rm -rf build",
+        "rmdir temp",
         "/sbin/reboot",
+        "/usr/bin/rmdir temp",
     };
     const auto context = make_context();
 

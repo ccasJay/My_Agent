@@ -11,7 +11,8 @@ namespace {
 const std::unordered_set<std::string_view> kDeniedPrograms {
     "reboot",
     "shutdown",
-    "rm"
+    "rm",
+    "rmdir",
 };
 
 const std::unordered_set<std::string_view> kShellWrappers {
