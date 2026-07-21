@@ -199,6 +199,59 @@ void TuiState::fail_task(std::string message) {
     append(TuiLogKind::Error, "Error", std::move(message));
 }
 
+void TuiState::load_session(const agent::SessionSnapshot& snapshot) {
+    logs_.clear();
+    task_count_ = 0;
+    step_ = 0;
+    log_revision_ = 0;
+    status_ = TuiStatus::Ready;
+    activity_ = TuiActivity::Idle;
+    activity_detail_.clear();
+    pending_command_.clear();
+    turn_started_at_ = {};
+    activity_started_at_ = {};
+    model_name_ = snapshot.metadata.model_name;
+
+    std::string restored = snapshot.metadata.title;
+    if (restored.empty()) {
+        restored = snapshot.metadata.id;
+    }
+    append(TuiLogKind::System, "Session restored", std::move(restored));
+
+    for (const auto& message : snapshot.messages) {
+        switch (message.kind) {
+        case agent::SessionMessageKind::System:
+            break;
+        case agent::SessionMessageKind::UserPrompt:
+            ++task_count_;
+            append(
+                TuiLogKind::Task,
+                "Task " + std::to_string(task_count_),
+                message.content);
+            break;
+        case agent::SessionMessageKind::Assistant:
+            append(TuiLogKind::Assistant, "Assistant", message.content);
+            break;
+        case agent::SessionMessageKind::Observation:
+            append(TuiLogKind::Observation, "Observation", message.content);
+            break;
+        case agent::SessionMessageKind::HostHint:
+            append(TuiLogKind::System, "Host", message.content);
+            break;
+        }
+    }
+}
+
+void TuiState::append_notice(
+    std::string heading,
+    std::string content,
+    bool error) {
+    append(
+        error ? TuiLogKind::Error : TuiLogKind::System,
+        std::move(heading),
+        std::move(content));
+}
+
 bool TuiState::running() const noexcept {
     return status_ == TuiStatus::Running || status_ == TuiStatus::Stopping;
 }

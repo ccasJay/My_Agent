@@ -1,18 +1,15 @@
 #pragma once
 
-#include "config/agent_loader.hpp"
-
 #include <string>
 
-namespace swe_agent::model {
-struct ModelClient;
+namespace swe_agent::agent {
+class SessionManager;
 }
 
 namespace swe_agent::tui {
 
 int run(
-    model::ModelClient& client,
-    const config::AgentConfig& agent_cfg,
+    agent::SessionManager& session_manager,
     const std::string& model_name);
 
 }  // namespace swe_agent::tui

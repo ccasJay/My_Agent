@@ -2,6 +2,7 @@
 
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
+#include "agent/session_store.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -64,6 +65,12 @@ public:
     // Worker 返回后，用最终结果提交真正的终态。
     void apply_result(const agent::AgentRunResult& result);
     void fail_task(std::string message);
+    // Replace the presentation state with a persisted conversation snapshot.
+    void load_session(const agent::SessionSnapshot& snapshot);
+    void append_notice(
+        std::string heading,
+        std::string content,
+        bool error = false);
 
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] std::size_t step() const noexcept;

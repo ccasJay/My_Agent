@@ -73,6 +73,7 @@ add_library(swe_agent_tui_support
     src/log_viewport.cpp
     src/prompt_history.cpp
     src/run_status.cpp
+    src/session_command.cpp
     src/tui_session.cpp
     src/tui_state.cpp
 )

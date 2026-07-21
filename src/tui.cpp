@@ -1,11 +1,11 @@
 #include "tui/tui.hpp"
 
-#include "agent/agent_loop.hpp"
-#include "model/model.hpp"
+#include "agent/session_manager.hpp"
 #include "tui/log_block.hpp"
 #include "tui/log_viewport.hpp"
 #include "tui/prompt_history.hpp"
 #include "tui/run_status.hpp"
+#include "tui/session_command.hpp"
 #include "tui/tui_session.hpp"
 #include "tui/tui_state.hpp"
 #include "tui/tui_view.hpp"
@@ -23,7 +23,9 @@
 #include <condition_variable>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -33,8 +35,7 @@
 namespace swe_agent::tui {
 
 int run(
-    model::ModelClient& client,
-    const config::AgentConfig& agent_cfg,
+    agent::SessionManager& session_manager,
     const std::string& model_name) {
     using namespace ftxui;
 
@@ -84,15 +85,14 @@ int run(
 
     TuiSession session{
         model_name,
-        [&client, &agent_cfg](
+        [&session_manager](
             const std::string& task,
             const agent::AgentRunOptions& options) {
-            config::AgentConfig task_cfg = agent_cfg;
-            task_cfg.user_prompt = task;
-            return agent::run(client, task_cfg, options);
+            return session_manager.submit(task, options);
         },
         post_refresh,
     };
+    (void)session.load_session(session_manager.active_snapshot());
 
     // 由 FTXUI Input 统一处理 UTF-8 编辑、光标位置和水平跟随。
     int input_cursor = 0;
@@ -113,6 +113,61 @@ int run(
 
     auto start_task = [&] {
         const std::string task = task_input;
+        const SessionCommand command = parse_session_command(task);
+        if (command.kind != SessionCommandKind::None) {
+            try {
+                switch (command.kind) {
+                case SessionCommandKind::New:
+                    (void)session_manager.new_session();
+                    (void)session.load_session(
+                        session_manager.active_snapshot());
+                    cached_log_revision =
+                        std::numeric_limits<std::size_t>::max();
+                    break;
+                case SessionCommandKind::List: {
+                    std::ostringstream content;
+                    const auto sessions = session_manager.list_sessions();
+                    for (const auto& summary : sessions) {
+                        const std::string title = summary.title.empty()
+                            ? "(untitled)"
+                            : summary.title;
+                        content << summary.id.substr(
+                                       0,
+                                       std::min<std::size_t>(8, summary.id.size()))
+                                << "  " << title << "  ["
+                                << summary.model_name << "]\n";
+                    }
+                    session.append_notice(
+                        "Sessions",
+                        content.str().empty()
+                            ? "No sessions in this workspace."
+                            : content.str());
+                    break;
+                }
+                case SessionCommandKind::Resume:
+                    (void)session_manager.resume(command.argument);
+                    (void)session.load_session(
+                        session_manager.active_snapshot());
+                    cached_log_revision =
+                        std::numeric_limits<std::size_t>::max();
+                    break;
+                case SessionCommandKind::Invalid:
+                    session.append_notice("Session command", command.error, true);
+                    break;
+                case SessionCommandKind::None:
+                    break;
+                }
+            } catch (const std::exception& error) {
+                session.append_notice("Session error", error.what(), true);
+            }
+
+            task_input.clear();
+            input_cursor = 0;
+            idle_ctrl_c_armed = false;
+            log_viewport.follow_tail();
+            return;
+        }
+
         if (!session.start(task)) {
             return;
         }

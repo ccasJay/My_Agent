@@ -75,6 +75,12 @@ public:
     bool reject_command(std::string reason = "Rejected by user");
     // 运行中不允许切换，避免同一任务使用两套授权语义。
     bool toggle_command_mode();
+    // Session switching is only valid while no task is running.
+    bool load_session(const agent::SessionSnapshot& snapshot);
+    void append_notice(
+        std::string heading,
+        std::string content,
+        bool error = false);
     // 用于退出/析构：请求停止并完整回收 Worker。
     void stop_and_join();
 

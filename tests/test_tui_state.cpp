@@ -2,6 +2,7 @@
 
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
+#include "agent/session_store.hpp"
 #include "tui/tui_state.hpp"
 
 #include <string>
@@ -184,4 +185,57 @@ TEST_CASE("TUI state preserves terminal reasons and accepts a new task", "[tui]"
         swe_agent::agent::AgentRunStatus::EmptyResponse));
     REQUIRE_FALSE(state.running());
     REQUIRE(state.status() == TuiStatus::EmptyResponse);
+}
+
+TEST_CASE("TUI state rebuilds logs from a persisted session", "[tui][session]") {
+    swe_agent::tui::TuiState state{"test-model"};
+    REQUIRE(state.begin_task("old task"));
+    state.apply_result(make_result(swe_agent::agent::AgentRunStatus::Completed));
+    const swe_agent::agent::SessionSnapshot snapshot{
+        .metadata = {
+            .id = "abcdef123456",
+            .title = "restored task",
+            .workspace = "/tmp/project",
+            .model_name = "test-model",
+            .system_prompt = "system",
+            .step_limit = 3,
+        },
+        .messages = {
+            {
+                .sequence = 0,
+                .role = swe_agent::model::Role::System,
+                .kind = swe_agent::agent::SessionMessageKind::System,
+                .content = "system",
+            },
+            {
+                .sequence = 1,
+                .role = swe_agent::model::Role::User,
+                .kind = swe_agent::agent::SessionMessageKind::UserPrompt,
+                .content = "restored task",
+            },
+            {
+                .sequence = 2,
+                .role = swe_agent::model::Role::Assistant,
+                .kind = swe_agent::agent::SessionMessageKind::Assistant,
+                .content = "working",
+            },
+            {
+                .sequence = 3,
+                .role = swe_agent::model::Role::User,
+                .kind = swe_agent::agent::SessionMessageKind::Observation,
+                .content = "Observation:\noutput",
+            },
+        },
+    };
+
+    state.load_session(snapshot);
+
+    REQUIRE_FALSE(state.running());
+    REQUIRE(state.status() == swe_agent::tui::TuiStatus::Ready);
+    REQUIRE(state.task_id() == 1);
+    REQUIRE(state.logs().size() == 4);
+    REQUIRE(state.logs()[0].heading == "Session restored");
+    REQUIRE(state.logs()[1].kind == swe_agent::tui::TuiLogKind::Task);
+    REQUIRE(state.logs()[2].kind == swe_agent::tui::TuiLogKind::Assistant);
+    REQUIRE(state.logs()[3].kind == swe_agent::tui::TuiLogKind::Observation);
 }

@@ -387,3 +387,42 @@ TEST_CASE("TUI session stop releases command approval", "[tui][session][authoriz
     REQUIRE(received.action == CommandAction::Stop);
     REQUIRE_FALSE(session.snapshot(0).awaiting_approval);
 }
+
+TEST_CASE("TUI session can replace idle logs from storage", "[tui][session]") {
+    swe_agent::tui::TuiSession session{
+        "old-model",
+        [](const std::string&, const swe_agent::agent::AgentRunOptions&) {
+            return swe_agent::agent::AgentRunResult{};
+        },
+        [] {},
+    };
+    const swe_agent::agent::SessionSnapshot restored{
+        .metadata = {
+            .id = "abcdef123456",
+            .title = "saved task",
+            .model_name = "restored-model",
+        },
+        .messages = {
+            {
+                .role = swe_agent::model::Role::System,
+                .kind = swe_agent::agent::SessionMessageKind::System,
+                .content = "system",
+            },
+            {
+                .sequence = 1,
+                .role = swe_agent::model::Role::User,
+                .kind = swe_agent::agent::SessionMessageKind::UserPrompt,
+                .content = "saved task",
+            },
+        },
+    };
+
+    REQUIRE(session.load_session(restored));
+    session.append_notice("Sessions", "abcdef12 saved task");
+
+    const auto snapshot = session.snapshot(0);
+    REQUIRE(snapshot.model_name == "restored-model");
+    REQUIRE(snapshot.task_id == 1);
+    REQUIRE(snapshot.new_logs.size() == 3);
+    REQUIRE(snapshot.new_logs.back().heading == "Sessions");
+}

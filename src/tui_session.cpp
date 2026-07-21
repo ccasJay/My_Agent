@@ -141,6 +141,37 @@ bool TuiSession::toggle_command_mode() {
     return true;
 }
 
+bool TuiSession::load_session(const agent::SessionSnapshot& snapshot) {
+    {
+        std::lock_guard lock{mutex_};
+        if (state_.running()) {
+            return false;
+        }
+    }
+    join_worker();
+    {
+        std::lock_guard lock{mutex_};
+        approval_decision_.reset();
+        state_.load_session(snapshot);
+    }
+    notify();
+    return true;
+}
+
+void TuiSession::append_notice(
+    std::string heading,
+    std::string content,
+    bool error) {
+    {
+        std::lock_guard lock{mutex_};
+        state_.append_notice(
+            std::move(heading),
+            std::move(content),
+            error);
+    }
+    notify();
+}
+
 void TuiSession::stop_and_join() {
     stop_source_.request_stop();
     approval_cv_.notify_all();
