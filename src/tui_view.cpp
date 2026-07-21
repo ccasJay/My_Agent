@@ -405,31 +405,61 @@ ftxui::Element render_header(
     int terminal_width) {
     using namespace ftxui;
     const TuiLayoutDensity density = tui_layout_density(terminal_width);
-    const std::string brand = density == TuiLayoutDensity::Minimal
-        ? "SWΞ"
-        : "SWΞ / AGENT";
-    const Element status = text("● " + snapshot.status_text) |
-        bold | color(status_color(snapshot.status));
-    Elements header{
-        text(" " + brand + " ") | bold | color(blueprint_color()),
-    };
-    if (density == TuiLayoutDensity::Full) {
-        header.push_back(text("Model ") | dim);
-        header.push_back(text(snapshot.model_name) | bold | color(ink_color()));
-        header.push_back(text("  Step " + std::to_string(snapshot.step)) | dim);
-    }
-    header.push_back(filler());
     const Color mode_color = snapshot.command_mode == CommandMode::Auto
         ? complete_color()
         : review_color();
+    const std::string mode_name{command_mode_name(snapshot.command_mode)};
+    const std::string status_text = "● " + snapshot.status_text;
+    const std::string brand = density == TuiLayoutDensity::Minimal
+        ? " SWΞ "
+        : " SWΞ / AGENT ";
+    Elements header;
+
     if (density == TuiLayoutDensity::Minimal) {
-        header.push_back(text(std::string{command_mode_name(snapshot.command_mode)} + " ") |
-                         bold | color(mode_color));
+        const std::string mode_text = " " + mode_name;
+        const int tail_width = ftxui::string_width(status_text) +
+            ftxui::string_width(mode_text);
+        const bool show_brand =
+            ftxui::string_width(brand) + tail_width <= terminal_width;
+        if (show_brand) {
+            header.push_back(text(brand) | bold | color(blueprint_color()));
+        }
+        header.push_back(filler());
+        const int status_budget = std::max(
+            terminal_width - ftxui::string_width(mode_text) -
+                (show_brand ? ftxui::string_width(brand) : 0),
+            0);
+        header.push_back(text(truncate_to_width(status_text, status_budget)) |
+                         bold | color(status_color(snapshot.status)));
+        header.push_back(text(mode_text) | bold | color(mode_color));
     } else {
+        header.push_back(text(brand) | bold | color(blueprint_color()));
+        const std::string mode_label = "Mode ";
+        const std::string mode_text = mode_name + "  ";
+        const int tail_width = ftxui::string_width(mode_label) +
+            ftxui::string_width(mode_text) +
+            ftxui::string_width(status_text);
+        if (density == TuiLayoutDensity::Full) {
+            const std::string model_label = "Model ";
+            const std::string step_text =
+                "  Step " + std::to_string(snapshot.step);
+            const int model_budget = std::max(
+                terminal_width - ftxui::string_width(brand) -
+                    ftxui::string_width(model_label) -
+                    ftxui::string_width(step_text) - tail_width,
+                0);
+            header.push_back(text(model_label) | dim);
+            header.push_back(
+                text(truncate_to_width(snapshot.model_name, model_budget)) |
+                bold | color(ink_color()));
+            header.push_back(text(step_text) | dim);
+        }
+        header.push_back(filler());
         header.push_back(text("Mode ") | bold | color(mode_color));
-        header.push_back(text(std::string{command_mode_name(snapshot.command_mode)} + "  ") | dim);
+        header.push_back(text(mode_text) | dim);
+        header.push_back(text(status_text) |
+                         bold | color(status_color(snapshot.status)));
     }
-    header.push_back(status);
     return hbox(std::move(header)) | bgcolor(paper_color());
 }
 
@@ -442,22 +472,37 @@ ftxui::Element render_status_bar(
     using namespace ftxui;
     const TuiLayoutDensity density = tui_layout_density(terminal_width);
     Elements status;
+    const std::string position = line_count == 0
+        ? std::string{}
+        : std::to_string(viewport.current_line() + 1) + "/" +
+            std::to_string(line_count);
+    const std::string pane = active_pane == ActivePane::Prompt
+        ? "Prompt"
+        : "Scrollback";
+    const std::string following = viewport.following_tail()
+        ? "Following latest"
+        : "Scroll paused";
     if (density == TuiLayoutDensity::Full) {
-        status.push_back(text("Model " + snapshot.model_name + "  Step " +
-                              std::to_string(snapshot.step)) | dim);
-    }
-    if (density != TuiLayoutDensity::Minimal) {
-        status.push_back(text(active_pane == ActivePane::Prompt
-                                  ? "Prompt  │  "
-                                  : "Scrollback  │  ") | dim);
-        status.push_back(text(viewport.following_tail()
-                                  ? "Following latest"
-                                  : "Scroll paused") | dim);
+        const std::string model_label = "Model ";
+        const std::string fixed_fields =
+            " │ Step " + std::to_string(snapshot.step) + " │ " + pane +
+            " │ " + following;
+        const int position_width = position.empty()
+            ? 0
+            : ftxui::string_width(position) + 2;
+        const int model_budget = std::max(
+            terminal_width - ftxui::string_width(model_label) -
+                ftxui::string_width(fixed_fields) - position_width,
+            0);
+        status.push_back(text(
+            model_label + truncate_to_width(snapshot.model_name, model_budget) +
+            fixed_fields) | dim);
+    } else if (density == TuiLayoutDensity::Compact) {
+        status.push_back(text(pane + " │ " + following) | dim);
     }
     status.push_back(filler());
-    if (line_count != 0) {
-        status.push_back(text(std::to_string(viewport.current_line() + 1) +
-                              "/" + std::to_string(line_count)) | dim);
+    if (!position.empty()) {
+        status.push_back(text(position) | dim);
     }
     return hbox(std::move(status)) | bgcolor(paper_color());
 }
@@ -524,6 +569,22 @@ ftxui::Element render_shortcuts(
         row.push_back(std::move(hints[i]));
     }
     return hbox(std::move(row)) | bgcolor(paper_color());
+}
+
+ftxui::Element render_tui_layout(
+    ftxui::Element header,
+    ftxui::Element log,
+    ftxui::Element action,
+    ftxui::Element status,
+    ftxui::Element shortcuts) {
+    using namespace ftxui;
+    return vbox({
+        std::move(header),
+        std::move(log),
+        std::move(action),
+        std::move(status),
+        std::move(shortcuts),
+    }) | color(ink_color()) | bgcolor(paper_color());
 }
 
 }  // namespace swe_agent::tui

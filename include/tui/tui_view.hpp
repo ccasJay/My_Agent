@@ -99,4 +99,11 @@ ftxui::Element render_shortcuts(
     bool following_tail,
     int terminal_width);
 
+ftxui::Element render_tui_layout(
+    ftxui::Element header,
+    ftxui::Element log,
+    ftxui::Element action,
+    ftxui::Element status,
+    ftxui::Element shortcuts);
+
 }  // namespace swe_agent::tui

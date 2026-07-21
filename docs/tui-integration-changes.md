@@ -96,10 +96,10 @@ Error；状态与审批操作复用这些语义色。
 | 空闲 | `↑` / `↓` | 浏览任务输入历史，并在退出历史后恢复原草稿 |
 | 空闲 | `Tab` | 在 Prompt 和 Scrollback 之间切换焦点 |
 | 空闲 | `Shift+Tab` | 在 Auto/Review 命令审核模式之间切换 |
-| Scrollback | `↑` / `↓` | 选择上一个或下一个日志块 |
+| Scrollback | `↑` / `↓` | 逐行滚动日志 |
+| Scrollback | `Ctrl+↑` / `Ctrl+↓` | 选择上一个或下一个日志块 |
 | Scrollback | `Enter` | 展开或折叠选中的命令块 |
 | Scrollback | `Esc` | 返回 Prompt |
-| 空闲 | `Ctrl+↑` / `Ctrl+↓` | 单行滚动日志 |
 | 空闲 | `Ctrl+C` | 清空输入；输入为空时连续按两次退出 |
 | 空闲 | `Ctrl+D` | 输入为空时退出 |
 | 运行 | `↑` / `↓` | 单行滚动日志 |

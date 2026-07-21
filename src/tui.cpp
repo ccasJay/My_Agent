@@ -298,7 +298,7 @@ int run(
                   task_input,
                   kPromptPlaceholder);
 
-        return vbox({
+        return render_tui_layout(
             render_header(snapshot, cached_terminal_width),
             cached_log_panel,
             input_panel,
@@ -314,8 +314,7 @@ int run(
                 snapshot.command_mode,
                 active_pane,
                 log_viewport.following_tail(),
-                cached_terminal_width),
-        });
+                cached_terminal_width));
     });
 
     const auto exit_loop = app.ExitLoopClosure();

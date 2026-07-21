@@ -2,9 +2,12 @@
 
 #include "tui/tui_view.hpp"
 
+#include <ftxui/component/component.hpp>
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/string.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -14,6 +17,89 @@ std::string render_to_text(ftxui::Element element, int width, int height) {
     ftxui::Screen screen(width, height);
     ftxui::Render(screen, std::move(element));
     return screen.ToString();
+}
+
+ftxui::Screen render_to_screen(
+    ftxui::Element element,
+    int width,
+    int height) {
+    ftxui::Screen screen(width, height);
+    ftxui::Render(screen, std::move(element));
+    return screen;
+}
+
+void require_render_within(
+    const ftxui::Screen& screen,
+    int width,
+    int height) {
+    REQUIRE(screen.dimx() == width);
+    REQUIRE(screen.dimy() == height);
+    for (int y = 0; y < screen.dimy(); ++y) {
+        int rendered_width = 0;
+        for (int x = 0; x < screen.dimx(); ++x) {
+            rendered_width += std::max(
+                ftxui::string_width(screen.CellAt(x, y).character),
+                0);
+        }
+        REQUIRE(rendered_width <= width);
+    }
+}
+
+ftxui::Screen render_actual_layout(
+    swe_agent::tui::TuiSnapshot snapshot,
+    int width,
+    int height) {
+    std::string task_input;
+    auto input = ftxui::Input(&task_input, "Describe a task");
+    const std::vector<swe_agent::tui::LogLine> lines{
+        {
+            .text = "Task",
+            .kind = swe_agent::tui::TuiLogKind::Task,
+            .block_index = 0,
+            .role = swe_agent::tui::LogLineRole::Heading,
+        },
+        {
+            .text = "Keep the real five-region layout visible",
+            .kind = swe_agent::tui::TuiLogKind::Assistant,
+            .block_index = 0,
+            .role = swe_agent::tui::LogLineRole::Content,
+        },
+    };
+    swe_agent::tui::LogViewport viewport;
+    (void)viewport.sync(lines.size());
+    const bool approval = snapshot.awaiting_approval;
+
+    return render_to_screen(
+        swe_agent::tui::render_tui_layout(
+            swe_agent::tui::render_header(snapshot, width),
+            swe_agent::tui::render_log_panel(
+                lines,
+                {.begin = 0, .end = lines.size()},
+                swe_agent::tui::ActivePane::Prompt,
+                0,
+                width),
+            approval
+                ? swe_agent::tui::render_approval_panel(snapshot, width)
+                : swe_agent::tui::render_prompt_panel(
+                      swe_agent::tui::ActivePane::Prompt,
+                      input,
+                      task_input,
+                      "Describe a task"),
+            swe_agent::tui::render_status_bar(
+                snapshot,
+                swe_agent::tui::ActivePane::Prompt,
+                viewport,
+                lines.size(),
+                width),
+            swe_agent::tui::render_shortcuts(
+                snapshot.running,
+                snapshot.awaiting_approval,
+                snapshot.command_mode,
+                swe_agent::tui::ActivePane::Prompt,
+                viewport.following_tail(),
+                width)),
+        width,
+        height);
 }
 
 swe_agent::tui::TuiSnapshot snapshot_for_view() {
@@ -140,6 +226,27 @@ TEST_CASE("UTF-8 newlines produce content rows", "[tui][view]") {
     REQUIRE(rendered.lines[3].role == LogLineRole::Gap);
 }
 
+TEST_CASE("CJK and emoji wrap without exceeding or losing content", "[tui][view]") {
+    const std::string content = "修复界面🙂并保留终态🚀";
+    const std::vector<swe_agent::tui::TuiLogBlock> blocks{{
+        .kind = TuiLogKind::Assistant,
+        .heading = "Analysis",
+        .summary = content,
+    }};
+
+    const auto rendered = make_log_lines(blocks, 0, 8);
+    std::string reconstructed;
+    for (const auto& line : rendered.lines) {
+        if (line.role != LogLineRole::Content) {
+            continue;
+        }
+        REQUIRE(ftxui::string_width(line.text) <= 8);
+        reconstructed += line.text;
+    }
+
+    REQUIRE(reconstructed == content);
+}
+
 TEST_CASE("full header shows signal-ledger metadata", "[tui][view]") {
     const std::string rendered = render_to_text(
         swe_agent::tui::render_header(snapshot_for_view(), 100), 100, 3);
@@ -172,6 +279,86 @@ TEST_CASE("minimal header uses the abbreviated brand", "[tui][view]") {
     REQUIRE(rendered.find("Review") != std::string::npos);
     REQUIRE(auto_rendered.find("Auto") != std::string::npos);
     REQUIRE(auto_rendered.find("Review") == std::string::npos);
+}
+
+TEST_CASE("full header reserves mode and longest status from a long UTF-8 model", "[tui][view]") {
+    auto snapshot = snapshot_for_view();
+    snapshot.model_name =
+        "超长模型🙂-with-a-name-that-must-not-displace-critical-fields";
+    snapshot.status = swe_agent::tui::TuiStatus::StepLimitReached;
+    snapshot.status_text = "Step limit reached";
+
+    const std::string rendered = render_to_text(
+        swe_agent::tui::render_header(snapshot, 80), 80, 1);
+
+    REQUIRE(rendered.find("超长模型🙂") != std::string::npos);
+    REQUIRE(rendered.find("…") != std::string::npos);
+    REQUIRE(rendered.find("Review") != std::string::npos);
+    REQUIRE(rendered.find("Step limit reached") != std::string::npos);
+}
+
+TEST_CASE("minimal header preserves complete mode before brand and status", "[tui][view]") {
+    auto snapshot = snapshot_for_view();
+    snapshot.status_text = "Step limit reached";
+    snapshot.status = swe_agent::tui::TuiStatus::StepLimitReached;
+
+    const std::string rendered = render_to_text(
+        swe_agent::tui::render_header(snapshot, 16), 16, 1);
+
+    REQUIRE(rendered.find("Review") != std::string::npos);
+}
+
+TEST_CASE("minimal header keeps longest status at 55 columns", "[tui][view]") {
+    auto snapshot = snapshot_for_view();
+    snapshot.status_text = "Step limit reached";
+    snapshot.status = swe_agent::tui::TuiStatus::StepLimitReached;
+
+    const std::string rendered = render_to_text(
+        swe_agent::tui::render_header(snapshot, 55), 55, 1);
+
+    REQUIRE(rendered.find("Review") != std::string::npos);
+    REQUIRE(rendered.find("Step limit reached") != std::string::npos);
+}
+
+TEST_CASE("full status fields use visible separators", "[tui][view]") {
+    swe_agent::tui::LogViewport viewport;
+    (void)viewport.sync(12);
+
+    const std::string rendered = render_to_text(
+        swe_agent::tui::render_status_bar(
+            snapshot_for_view(),
+            swe_agent::tui::ActivePane::Prompt,
+            viewport,
+            12,
+            100),
+        100,
+        1);
+
+    REQUIRE(rendered.find(
+                "Model gpt-test │ Step 7 │ Prompt │ Following latest") !=
+            std::string::npos);
+}
+
+TEST_CASE("full status reserves the reading position from a long model", "[tui][view]") {
+    auto snapshot = snapshot_for_view();
+    snapshot.model_name =
+        "a-model-name-that-is-intentionally-long-enough-to-fill-the-status";
+    swe_agent::tui::LogViewport viewport;
+    (void)viewport.sync(120);
+
+    const std::string rendered = render_to_text(
+        swe_agent::tui::render_status_bar(
+            snapshot,
+            swe_agent::tui::ActivePane::Scrollback,
+            viewport,
+            120,
+            80),
+        80,
+        1);
+
+    REQUIRE(rendered.find("Scrollback") != std::string::npos);
+    REQUIRE(rendered.find("Following latest") != std::string::npos);
+    REQUIRE(rendered.find("120/120") != std::string::npos);
 }
 
 TEST_CASE("narrow log content reserves space for borders and rail", "[tui][view]") {
@@ -246,4 +433,77 @@ TEST_CASE("approval panel presents decision labels and command", "[tui][view]") 
     REQUIRE(rendered.find("Y allow") != std::string::npos);
     REQUIRE(rendered.find("N reject") != std::string::npos);
     REQUIRE(rendered.find("Esc stop") != std::string::npos);
+}
+
+TEST_CASE("root layout applies paper and ink to ordinary cells", "[tui][view]") {
+    const ftxui::Screen screen = render_to_screen(
+        swe_agent::tui::render_tui_layout(
+            ftxui::text("header"),
+            ftxui::text("ordinary"),
+            ftxui::text("action"),
+            ftxui::text("status"),
+            ftxui::text("shortcuts")),
+        20,
+        5);
+
+    bool found_ordinary = false;
+    for (int y = 0; y < screen.dimy(); ++y) {
+        for (int x = 0; x < screen.dimx(); ++x) {
+            const auto& cell = screen.CellAt(x, y);
+            REQUIRE(cell.background_color == ftxui::Color::RGB(248, 250, 252));
+            if (cell.character == "o") {
+                found_ordinary = true;
+                REQUIRE(cell.foreground_color ==
+                        ftxui::Color::RGB(31, 41, 55));
+            }
+        }
+    }
+    REQUIRE(found_ordinary);
+}
+
+TEST_CASE("real five-region layout stays legible at responsive widths", "[tui][view]") {
+    SECTION("full width approval") {
+        auto snapshot = snapshot_for_view();
+        snapshot.awaiting_approval = true;
+        snapshot.pending_command = "cmake --build build --parallel 2";
+        const auto screen = render_actual_layout(snapshot, 100, 12);
+        const std::string rendered = screen.ToString();
+
+        require_render_within(screen, 100, 12);
+        REQUIRE(rendered.find("Review") != std::string::npos);
+        REQUIRE(rendered.find("Task") != std::string::npos);
+        REQUIRE(rendered.find("cmake --build build --parallel 2") !=
+                std::string::npos);
+        REQUIRE(rendered.find("Y allow") != std::string::npos);
+        REQUIRE(rendered.find("N reject") != std::string::npos);
+        REQUIRE(rendered.find("2/2") != std::string::npos);
+    }
+
+    SECTION("compact width") {
+        const auto screen = render_actual_layout(snapshot_for_view(), 70, 9);
+        const std::string rendered = screen.ToString();
+
+        require_render_within(screen, 70, 9);
+        REQUIRE(rendered.find("Review") != std::string::npos);
+        REQUIRE(rendered.find("Task") != std::string::npos);
+        REQUIRE(rendered.find("Describe a task") != std::string::npos);
+        REQUIRE(rendered.find("Following latest") != std::string::npos);
+        REQUIRE(rendered.find("2/2") != std::string::npos);
+    }
+
+    SECTION("minimal width and short approval height") {
+        auto snapshot = snapshot_for_view();
+        snapshot.awaiting_approval = true;
+        snapshot.pending_command = "git status --short";
+        const auto screen = render_actual_layout(snapshot, 50, 11);
+        const std::string rendered = screen.ToString();
+
+        require_render_within(screen, 50, 11);
+        REQUIRE(rendered.find("Review") != std::string::npos);
+        REQUIRE(rendered.find("Task") != std::string::npos);
+        REQUIRE(rendered.find("git status --short") != std::string::npos);
+        REQUIRE(rendered.find("Y allow") != std::string::npos);
+        REQUIRE(rendered.find("N reject") != std::string::npos);
+        REQUIRE(rendered.find("2/2") != std::string::npos);
+    }
 }
