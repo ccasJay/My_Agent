@@ -81,16 +81,9 @@ void TuiState::begin_command_approval(
 
 void TuiState::resolve_command_approval(
     const agent::CommandDecision& decision) {
+    (void)decision;
     if (pending_command_.empty()) {
         return;
-    }
-
-    if (decision.action == agent::CommandAction::Reject) {
-        std::string content = "$ " + pending_command_;
-        if (!decision.reason.empty()) {
-            content += "\nReason: " + decision.reason;
-        }
-        append(TuiLogKind::System, "Command rejected", std::move(content));
     }
 
     pending_command_.clear();
@@ -151,6 +144,23 @@ void TuiState::apply_event(const agent::AgentEvent& event) {
         }
         append(TuiLogKind::Observation, "Observation", event.content);
         break;
+    case agent::AgentEventType::CommandRejected: {
+        activity_ = TuiActivity::Thinking;
+        activity_detail_.clear();
+        if (status_ != TuiStatus::Stopping) {
+            activity_started_at_ = Clock::now();
+            status_ = TuiStatus::Running;
+        }
+        std::string content = "$ " + event.command;
+        if (!event.rule_id.empty()) {
+            content += "\n规则：" + event.rule_id;
+        }
+        if (!event.content.empty()) {
+            content += "\n原因：" + event.content;
+        }
+        append(TuiLogKind::System, "命令已拒绝", std::move(content));
+        break;
+    }
     case agent::AgentEventType::Completed:
         append(TuiLogKind::Final, "Final", event.content);
         break;

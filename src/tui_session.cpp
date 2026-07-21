@@ -235,36 +235,43 @@ agent::CommandDecision TuiSession::authorize_command(
         if (stop_token.stop_requested()) {
             return {
                 .action = agent::CommandAction::Stop,
-                .reason = "Stop requested",
+                .reason = "收到停止请求。",
             };
         }
     }
 
-    // policy_context_ 只读且构造后不变，可在锁外评估。
-    const agent::PolicyResult policy =
-        agent::evaluate_command_policy(request.command, policy_context_);
-    if (policy.action == agent::PolicyAction::Deny) {
-        return {
-            .action = agent::CommandAction::Reject,
-            .reason = policy.reason.empty()
-                ? std::string{"Denied by command policy"}
-                : policy.reason,
-        };
+    bool review_all = false;
+    {
+        std::lock_guard lock{mutex_};
+        review_all = command_mode_ == CommandMode::Review;
     }
 
+    const agent::CommandDecision decision = agent::authorize_command(
+        request,
+        policy_context_,
+        review_all,
+        [this, stop_token](const agent::CommandRequest& review_request) {
+            return review_command(review_request, stop_token);
+        });
+
+    if (stop_token.stop_requested()) {
+        return {
+            .action = agent::CommandAction::Stop,
+            .reason = "收到停止请求。",
+        };
+    }
+    return decision;
+}
+
+agent::CommandDecision TuiSession::review_command(
+    const agent::CommandRequest& request,
+    const agent::StopToken& stop_token) {
     {
         std::lock_guard lock{mutex_};
         if (stop_token.stop_requested()) {
             return {
                 .action = agent::CommandAction::Stop,
-                .reason = "Stop requested",
-            };
-        }
-        // Auto 仅在 policy Allow 时直批；RequireReview 仍走人工审批。
-        if (command_mode_ == CommandMode::Auto &&
-            policy.action == agent::PolicyAction::Allow) {
-            return {
-                .action = agent::CommandAction::Approve,
+                .reason = "收到停止请求。",
             };
         }
         approval_decision_.reset();
@@ -282,7 +289,7 @@ agent::CommandDecision TuiSession::authorize_command(
     if (stop_token.stop_requested()) {
         decision = {
             .action = agent::CommandAction::Stop,
-            .reason = "Stop requested",
+            .reason = "收到停止请求。",
         };
     } else {
         decision = std::move(*approval_decision_);

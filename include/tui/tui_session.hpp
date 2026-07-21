@@ -2,7 +2,7 @@
 
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
-#include "agent/command_policy.hpp"
+#include "agent/command_authorization.hpp"
 #include "tui/tui_state.hpp"
 
 #include <condition_variable>
@@ -74,7 +74,7 @@ public:
     bool request_stop();
     // 提交当前待审批命令的决定；无待审批命令时返回 false。
     bool approve_command();
-    bool reject_command(std::string reason = "Rejected by user");
+    bool reject_command(std::string reason = "用户拒绝执行该命令。");
     // 运行中不允许切换，避免同一任务使用两套授权语义。
     bool toggle_command_mode();
     // Session switching is only valid while no task is running.
@@ -94,6 +94,16 @@ public:
 
 private:
     agent::CommandDecision authorize_command(
+        const agent::CommandRequest& request,
+        const agent::StopToken& stop_token);
+    /**
+     * @brief 通过条件变量等待 TUI 用户对命令作出决定。
+     *
+     * @param request 需要展示给用户的命令。
+     * @param stop_token 用于在退出时解除等待的停止令牌。
+     * @return 用户的批准、拒绝或停止决定。
+     */
+    agent::CommandDecision review_command(
         const agent::CommandRequest& request,
         const agent::StopToken& stop_token);
     bool submit_command_decision(agent::CommandDecision decision);

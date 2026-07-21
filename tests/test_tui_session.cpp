@@ -355,7 +355,7 @@ TEST_CASE("TUI session rejects a pending command", "[tui][session][authorization
     REQUIRE(received.reason == "Not allowed");
     const auto snapshot = session.snapshot(0);
     REQUIRE_FALSE(snapshot.awaiting_approval);
-    REQUIRE(snapshot.new_logs.back().heading == "Command rejected");
+    REQUIRE(snapshot.new_logs.size() == 1);
 }
 
 TEST_CASE(
@@ -404,6 +404,59 @@ TEST_CASE(
     REQUIRE(received.action == CommandAction::Reject);
     REQUIRE_FALSE(received.reason.empty());
     REQUIRE_FALSE(session.snapshot(0).awaiting_approval);
+}
+
+TEST_CASE(
+    "TUI session auto mode reviews complex commands",
+    "[tui][session][authorization][policy]") {
+    using swe_agent::agent::AgentRunResult;
+    using swe_agent::agent::AgentRunStatus;
+    using swe_agent::agent::CommandAction;
+    using swe_agent::agent::CommandDecision;
+    using swe_agent::agent::CommandRequest;
+    using swe_agent::tui::CommandMode;
+
+    std::mutex notification_mutex;
+    std::condition_variable notification;
+    CommandDecision received{.action = CommandAction::Reject};
+    swe_agent::tui::TuiSession session{
+        "test-model",
+        [&](const std::string&, const swe_agent::agent::AgentRunOptions& options) {
+            received = options.authorizer(CommandRequest{
+                .command = "echo ok; rm cache",
+            });
+            return AgentRunResult{
+                .status = AgentRunStatus::Completed,
+                .response = {},
+            };
+        },
+        [&] {
+            std::lock_guard lock{notification_mutex};
+            notification.notify_all();
+        },
+        test_policy_context(),
+    };
+
+    REQUIRE(session.toggle_command_mode());
+    REQUIRE(session.command_mode() == CommandMode::Auto);
+    REQUIRE(session.start("task"));
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return session.awaiting_command_approval();
+        }));
+    }
+    REQUIRE(session.approve_command());
+    {
+        std::unique_lock lock{notification_mutex};
+        REQUIRE(notification.wait_for(lock, std::chrono::seconds{1}, [&] {
+            return !session.running();
+        }));
+    }
+    session.stop_and_join();
+
+    REQUIRE(received.action == CommandAction::Approve);
+    REQUIRE(received.rule_id == "complex-shell-syntax");
 }
 
 TEST_CASE("TUI session stop releases command approval", "[tui][session][authorization]") {

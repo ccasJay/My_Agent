@@ -117,13 +117,26 @@ TEST_CASE("TUI state tracks command approval", "[tui][authorization]") {
 
     state.resolve_command_approval(CommandDecision{
         .action = CommandAction::Reject,
-        .reason = "Rejected in test",
+        .reason = "测试拒绝原因。",
     });
     REQUIRE_FALSE(state.awaiting_command_approval());
     REQUIRE(state.pending_command().empty());
     REQUIRE(state.status_text() == "Thinking");
-    REQUIRE(state.logs().back().heading == "Command rejected");
-    REQUIRE(state.logs().back().content.find("Rejected in test") !=
+    REQUIRE(state.logs().size() == 1);
+
+    state.apply_event(swe_agent::agent::AgentEvent{
+        .type = swe_agent::agent::AgentEventType::CommandRejected,
+        .content = "测试拒绝原因。",
+        .command = "rm example.txt",
+        .rule_id = "user_rejected",
+    });
+    REQUIRE(state.logs().size() == 2);
+    REQUIRE(state.logs().back().heading == "命令已拒绝");
+    REQUIRE(state.logs().back().content.find("rm example.txt") !=
+        std::string::npos);
+    REQUIRE(state.logs().back().content.find("user_rejected") !=
+        std::string::npos);
+    REQUIRE(state.logs().back().content.find("测试拒绝原因") !=
         std::string::npos);
 }
 
