@@ -13,6 +13,13 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
+find_package(SQLite3 REQUIRED)
+
+if(TARGET SQLite3::SQLite3)
+    set(SWE_AGENT_SQLITE_TARGET SQLite3::SQLite3)
+else()
+    set(SWE_AGENT_SQLITE_TARGET SQLite::SQLite3)
+endif()
 
 FetchContent_Declare(
     CLI11
@@ -34,6 +41,8 @@ FetchContent_MakeAvailable(FTXUI)
 add_library(swe_agent_core
     src/agent_loader.cpp
     src/agent_session.cpp
+    src/session_paths.cpp
+    src/sqlite_session_store.cpp
     src/dotenv_loader.cpp
     src/http_client.cpp
     src/model_client.cpp
@@ -48,7 +57,10 @@ target_include_directories(swe_agent_core
 
 target_link_libraries(swe_agent_core
     PUBLIC nlohmann_json::nlohmann_json
-    PRIVATE CURL::libcurl yaml-cpp::yaml-cpp
+    PRIVATE
+        CURL::libcurl
+        yaml-cpp::yaml-cpp
+        ${SWE_AGENT_SQLITE_TARGET}
 )
 
 target_compile_options(swe_agent_core PRIVATE

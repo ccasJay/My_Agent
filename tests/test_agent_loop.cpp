@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "agent/agent_loop.hpp"
+#include "agent/history.hpp"
 #include "config/agent_loader.hpp"
 #include "model/model.hpp"
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -491,4 +493,55 @@ TEST_CASE("agent_loop stops when command authorization requests stop", "[agent_l
         events, AgentEventType::CommandStarted, "echo must-not-run"));
     REQUIRE_FALSE(has_command_event(
         events, AgentEventType::CommandFinished, "echo must-not-run"));
+}
+
+TEST_CASE("agent_loop checkpoints appended assistant history", "[agent_loop][history]") {
+    FakeProvider provider;
+    provider.responses = {
+        "Conclusion: done\nRUN: echo COMPLETE_TASK\n",
+    };
+    swe_agent::model::MSG history{
+        {swe_agent::model::Role::System, "system"},
+        {swe_agent::model::Role::User, "task"},
+    };
+    std::vector<swe_agent::agent::HistoryAppend> appends;
+    swe_agent::agent::HistoryHooks hooks;
+    hooks.commit_append = [&](const swe_agent::agent::HistoryAppend& append) {
+        appends.push_back(append);
+    };
+
+    const auto result = swe_agent::agent::run(
+        provider,
+        make_cfg(),
+        history,
+        {},
+        hooks);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Completed);
+    REQUIRE(appends.size() == 1);
+    REQUIRE(appends[0].sequence == 2);
+    REQUIRE(appends[0].kind == swe_agent::agent::HistoryEntryKind::Assistant);
+    REQUIRE(appends[0].message.role == swe_agent::model::Role::Assistant);
+    REQUIRE(appends[0].message.content.find("COMPLETE_TASK") != std::string::npos);
+}
+
+TEST_CASE("agent_loop rolls back history when checkpoint fails", "[agent_loop][history]") {
+    FakeProvider provider;
+    provider.responses = {
+        "Conclusion: done\nRUN: echo COMPLETE_TASK\n",
+    };
+    swe_agent::model::MSG history{
+        {swe_agent::model::Role::System, "system"},
+        {swe_agent::model::Role::User, "task"},
+    };
+    swe_agent::agent::HistoryHooks hooks;
+    hooks.commit_append = [](const swe_agent::agent::HistoryAppend&) {
+        throw std::runtime_error{"write failed"};
+    };
+
+    REQUIRE_THROWS_AS(
+        swe_agent::agent::run(provider, make_cfg(), history, {}, hooks),
+        std::runtime_error);
+    REQUIRE(history.size() == 2);
+    REQUIRE(history.back().content == "task");
 }

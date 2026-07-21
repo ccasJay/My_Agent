@@ -2,6 +2,7 @@
 
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
+#include "agent/history.hpp"
 #include "agent/shell.hpp"
 #include "config/agent_loader.hpp"
 #include "model/message.hpp"
@@ -136,10 +137,12 @@ CommandDecision request_authorization(
 /**
  * @brief Agent loop
  *
- * @tparam P
- * @param provider
- * @param agent_cfg
+ * @tparam P Provider 概念类型
+ * @param provider 模型调用实现
+ * @param agent_cfg agent 配置（step_limit / system 协议等）
  * @param history 调用方持有的会话历史；循环会将模型输出和 observation 追加到其中
+ * @param options 审批、停止 token 等运行选项
+ * @param history_hooks 可选；Assistant/Observation/HostHint 经 append_history 提交时触发
  * @return AgentRunResult
  * @note 初始history压入agent_cfg中的prompt -> last{} -> loop:
  *  [assistant 进 history -> 解析 RUN: -> COMPLETE_TASK 且有结论则结束;
@@ -150,7 +153,8 @@ AgentRunResult run(
     P& provider,
     const config::AgentConfig& agent_cfg,
     model::MSG& history,
-    const AgentRunOptions& options = {}) {
+    const AgentRunOptions& options = {},
+    const HistoryHooks& history_hooks = {}) {
     model::ModelResponse last{};
     std::size_t step = 0;
     AgentRunStatus status = AgentRunStatus::EmptyResponse;
@@ -181,13 +185,21 @@ AgentRunResult run(
         }
 
         // 1) 模型本轮输出先进 history（日志延后：成功 COMPLETE 只打 final，避免与 assistant 重复）
-        history.push_back({model::Role::Assistant, last.content});
+        append_history(
+            history,
+            {model::Role::Assistant, last.content},
+            HistoryEntryKind::Assistant,
+            history_hooks);
 
         // 2) 若含 RUN: 行 → 本地执行 → observation 以 User 写回
         const auto cmd = extract_run_command(last.content);
         if (!cmd) {
             emit_event(options, AgentEventType::Assistant, step, last.content);
-            history.push_back({model::Role::User, std::string{kFormatHint}});
+            append_history(
+                history,
+                {model::Role::User, std::string{kFormatHint}},
+                HistoryEntryKind::HostHint,
+                history_hooks);
             emit_event(
                 options,
                 AgentEventType::FormatError,
@@ -202,7 +214,11 @@ AgentRunResult run(
             const std::string conclusion = strip_run_lines(last.content);
             if (!has_nonempty_conclusion(conclusion)) {
                 emit_event(options, AgentEventType::Assistant, step, last.content);
-                history.push_back({model::Role::User, std::string{kMissingConclusionHint}});
+                append_history(
+                    history,
+                    {model::Role::User, std::string{kMissingConclusionHint}},
+                    HistoryEntryKind::HostHint,
+                    history_hooks);
                 emit_event(
                     options,
                     AgentEventType::FormatError,
@@ -264,10 +280,14 @@ AgentRunResult run(
             if (!decision.reason.empty()) {
                 rejection += "Reason: " + decision.reason + '\n';
             }
-            history.push_back({
-                model::Role::User,
-                std::string{"Observation:\n"} + rejection,
-            });
+            append_history(
+                history,
+                {
+                    model::Role::User,
+                    std::string{"Observation:\n"} + rejection,
+                },
+                HistoryEntryKind::Observation,
+                history_hooks);
             ++step;
             continue;
         }
@@ -288,10 +308,14 @@ AgentRunResult run(
             *cmd);
 
         // 前缀方便模型/人阅读；Role::User 兼容未接 tool_calls 的 API
-        history.push_back({
-            model::Role::User,
-            std::string{"Observation:\n"} + observation,
-        });
+        append_history(
+            history,
+            {
+                model::Role::User,
+                std::string{"Observation:\n"} + observation,
+            },
+            HistoryEntryKind::Observation,
+            history_hooks);
         // 有 observation 才继续下一轮 query（用掉 step）
         step++;
 
