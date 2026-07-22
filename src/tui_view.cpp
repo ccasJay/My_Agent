@@ -400,6 +400,72 @@ ftxui::Element render_prompt_panel(
         : prompt | borderStyled(ink_color());
 }
 
+ftxui::Element render_slash_suggest_panel(
+    const std::vector<SlashSuggestItem>& items,
+    std::size_t selected_index,
+    int terminal_width,
+    std::size_t max_visible) {
+    using namespace ftxui;
+
+    // 无候选时不占位、不画边框，交给上层决定是否插入布局。
+    if (items.empty()) {
+        return emptyElement();
+    }
+
+    // max_visible == 0 视为不限制（仍受 items 长度约束）。
+    const std::size_t visible_cap =
+        max_visible == 0 ? items.size() : max_visible;
+    const std::size_t visible_count = std::min(items.size(), visible_cap);
+    // 边框与左右内边距预留，窄终端时与其他面板一致用 truncate。
+    const int inner_width = std::max(terminal_width - 4, 1);
+
+    Elements rows;
+    rows.reserve(visible_count + 1);
+    for (std::size_t i = 0; i < visible_count; ++i) {
+        const SlashSuggestItem& item = items[i];
+        const std::string name_label = "/" + item.name;
+        const std::string_view summary{item.summary};
+
+        Element row;
+        if (summary.empty()) {
+            row = text(truncate_to_width(name_label, inner_width)) | bold |
+                color(ink_color());
+        } else {
+            // 命令名优先完整展示，摘要占用剩余宽度。
+            const int name_width = ftxui::string_width(name_label);
+            const int gap = 1;
+            const int summary_budget =
+                std::max(inner_width - name_width - gap, 0);
+            Element name_el =
+                text(truncate_to_width(name_label, inner_width)) | bold |
+                color(ink_color());
+            if (summary_budget <= 0) {
+                row = std::move(name_el);
+            } else {
+                row = hbox({
+                    std::move(name_el),
+                    text(" " + truncate_to_width(summary, summary_budget)) |
+                        dim,
+                });
+            }
+        }
+
+        // 选中行：反色高亮，与 scrollback 选中块风格一致。
+        if (i == selected_index) {
+            row = std::move(row) | inverted;
+        }
+        rows.push_back(std::move(row));
+    }
+
+    // 超出可见上限时用省略行提示还有更多匹配（v1 无滚动窗口）。
+    if (items.size() > visible_count) {
+        rows.push_back(text("…") | dim);
+    }
+
+    return vbox(std::move(rows)) | borderStyled(ink_color()) |
+        bgcolor(paper_color());
+}
+
 ftxui::Element render_header(
     const TuiSnapshot& snapshot,
     int terminal_width) {
