@@ -1,6 +1,7 @@
 #pragma once
 
 #include "acp/json_rpc.hpp"
+#include "acp/session_registry.hpp"
 #include "agent/session_store.hpp"
 #include "config/agent_loader.hpp"
 #include "model/model.hpp"
@@ -39,10 +40,17 @@ private:
     void handle_notification(std::string_view method, const Json& params);
     void handle_peer_response(const Json& message);
     void handle_initialize(const Json& params, const Json& id);
+    void handle_new_session(const Json& params, const Json& id);
+    void handle_list_sessions(const Json& params, const Json& id);
+    void handle_load_session(const Json& params, const Json& id);
+    void handle_resume_session(const Json& params, const Json& id);
+    void handle_close_session(const Json& params, const Json& id);
+    void replay_history(const agent::SessionSnapshot& snapshot);
     void send_invalid_request(const Json& id, std::string message);
 
     JsonRpcConnection& connection_;
     AcpServerContext context_;
+    AcpSessionRegistry sessions_;
     bool initialized_{false};
 };
 
