@@ -38,13 +38,32 @@ Json request_id_or_null(const Json& message) {
     return message["id"];
 }
 
-bool has_valid_session_setup(const Json& params) {
+bool has_valid_session_setup(
+    const Json& params,
+    bool require_mcp_servers) {
+    const bool valid_mcp_servers = require_mcp_servers
+        ? params.contains("mcpServers") &&
+            params["mcpServers"].is_array() &&
+            params["mcpServers"].empty()
+        : !params.contains("mcpServers") ||
+            (params["mcpServers"].is_array() &&
+             params["mcpServers"].empty());
     return params.contains("cwd") && params["cwd"].is_string() &&
-        params.contains("mcpServers") && params["mcpServers"].is_array() &&
-        params["mcpServers"].empty() &&
+        valid_mcp_servers &&
         (!params.contains("additionalDirectories") ||
          (params["additionalDirectories"].is_array() &&
           params["additionalDirectories"].empty()));
+}
+
+bool valid_protocol_version(const Json& version) {
+    if (version.is_number_unsigned()) {
+        return version.get<std::uint64_t>() <= 65535;
+    }
+    if (version.is_number_integer()) {
+        const std::int64_t value = version.get<std::int64_t>();
+        return value >= 0 && value <= 65535;
+    }
+    return false;
 }
 
 bool has_visible_text(std::string_view text) {
@@ -183,7 +202,8 @@ AcpServer::AcpServer(
           context_.provider,
           context_.agent_config,
           context_.session_store,
-          context_.model_name),
+          context_.model_name,
+          context_.active_session_limit),
       prompts_(connection_) {}
 
 int AcpServer::run() {
@@ -200,6 +220,13 @@ int AcpServer::run() {
 
         try {
             dispatch(read_result.message);
+        } catch (const agent::SessionStorageError& error) {
+            std::cerr << "ACP session storage failed: "
+                      << error.what() << '\n';
+            connection_.send_error(
+                request_id_or_null(read_result.message),
+                kInternalError,
+                "Session storage error");
         } catch (const std::exception& error) {
             std::cerr << "ACP request failed: " << error.what() << '\n';
             connection_.send_error(
@@ -326,8 +353,7 @@ void AcpServer::handle_initialize(const Json& params, const Json& id) {
         return;
     }
     if (!params.contains("protocolVersion") ||
-        (!params["protocolVersion"].is_number_integer() &&
-         !params["protocolVersion"].is_number_unsigned()) ||
+        !valid_protocol_version(params["protocolVersion"]) ||
         (params.contains("clientCapabilities") &&
          !params["clientCapabilities"].is_object()) ||
         (params.contains("clientInfo") && !params["clientInfo"].is_object())) {
@@ -356,7 +382,7 @@ void AcpServer::handle_initialize(const Json& params, const Json& id) {
 }
 
 void AcpServer::handle_new_session(const Json& params, const Json& id) {
-    if (!has_valid_session_setup(params)) {
+    if (!has_valid_session_setup(params, true)) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
     }
@@ -366,6 +392,8 @@ void AcpServer::handle_new_session(const Json& params, const Json& id) {
         connection_.send_result(id, {
             {"sessionId", active.session->id()},
         });
+    } catch (const AcpSessionCapacityError& error) {
+        connection_.send_error(id, kServerBusy, error.what());
     } catch (const AcpSessionError& error) {
         connection_.send_error(id, kInvalidParams, error.what());
     }
@@ -412,13 +440,11 @@ void AcpServer::handle_list_sessions(const Json& params, const Json& id) {
         connection_.send_result(id, std::move(result));
     } catch (const AcpSessionError& error) {
         connection_.send_error(id, kInvalidParams, error.what());
-    } catch (const agent::SessionStorageError& error) {
-        connection_.send_error(id, kInternalError, error.what());
     }
 }
 
 void AcpServer::handle_load_session(const Json& params, const Json& id) {
-    if (!has_valid_session_setup(params) ||
+    if (!has_valid_session_setup(params, true) ||
         !params.contains("sessionId") || !params["sessionId"].is_string()) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
@@ -433,14 +459,16 @@ void AcpServer::handle_load_session(const Json& params, const Json& id) {
             session_id,
             params["cwd"].get<std::string>());
         replay_history(loaded.snapshot);
-        connection_.send_result(id, nullptr);
+        connection_.send_result(id, Json::object());
+    } catch (const AcpSessionCapacityError& error) {
+        connection_.send_error(id, kServerBusy, error.what());
     } catch (const AcpSessionError& error) {
         connection_.send_error(id, kInvalidParams, error.what());
     }
 }
 
 void AcpServer::handle_resume_session(const Json& params, const Json& id) {
-    if (!has_valid_session_setup(params) ||
+    if (!has_valid_session_setup(params, false) ||
         !params.contains("sessionId") || !params["sessionId"].is_string()) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
@@ -455,6 +483,8 @@ void AcpServer::handle_resume_session(const Json& params, const Json& id) {
             session_id,
             params["cwd"].get<std::string>());
         connection_.send_result(id, Json::object());
+    } catch (const AcpSessionCapacityError& error) {
+        connection_.send_error(id, kServerBusy, error.what());
     } catch (const AcpSessionError& error) {
         connection_.send_error(id, kInvalidParams, error.what());
     }

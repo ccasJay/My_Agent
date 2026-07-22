@@ -9,13 +9,22 @@ AcpSessionRegistry::AcpSessionRegistry(
     model::IProvider& provider,
     config::AgentConfig agent_config,
     agent::ISessionStore& session_store,
-    std::string model_name)
+    std::string model_name,
+    std::size_t max_active_sessions)
     : provider_(provider),
       agent_config_(std::move(agent_config)),
       session_store_(session_store),
-      model_name_(std::move(model_name)) {}
+      model_name_(std::move(model_name)),
+      max_active_sessions_(max_active_sessions) {}
 
 AcpActiveSession AcpSessionRegistry::create(std::string_view cwd) {
+    {
+        std::lock_guard lock{mutex_};
+        if (active_.size() >= max_active_sessions_) {
+            throw AcpSessionCapacityError{
+                "Active session limit reached"};
+        }
+    }
     const std::string workspace = canonical_workspace(cwd);
     auto session = std::make_shared<agent::AgentSession>(
         agent::AgentSession::create(
@@ -85,6 +94,14 @@ std::string AcpSessionRegistry::canonical_workspace(std::string_view cwd) {
 AcpLoadedSession AcpSessionRegistry::restore(
     std::string_view session_id,
     std::string_view cwd) {
+    {
+        std::lock_guard lock{mutex_};
+        if (!active_.contains(std::string{session_id}) &&
+            active_.size() >= max_active_sessions_) {
+            throw AcpSessionCapacityError{
+                "Active session limit reached"};
+        }
+    }
     const std::string workspace = canonical_workspace(cwd);
     auto snapshot = session_store_.load_session(session_id);
     if (!snapshot.has_value()) {

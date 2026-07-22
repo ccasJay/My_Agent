@@ -246,7 +246,10 @@ std::vector<Json> parse_complete_messages(std::string_view output) {
 
 class ProtocolHarness {
 public:
-    ProtocolHarness(const std::filesystem::path& workspace, FakeProvider& provider)
+    ProtocolHarness(
+        const std::filesystem::path& workspace,
+        FakeProvider& provider,
+        std::size_t active_session_limit = 64)
         : workspace_(workspace.string()),
           store_(workspace / "agent.db"),
           connection_(input_, output_),
@@ -261,6 +264,7 @@ public:
                   },
                   .session_store = store_,
                   .model_name = "fake-model",
+                  .active_session_limit = active_session_limit,
               }) {}
 
     ~ProtocolHarness() {
@@ -439,7 +443,7 @@ TEST_CASE("ACP server runs a complete prompt and restores it", "[acp][server]") 
     const Json loaded = restored.wait_for([](const Json& message) {
         return is_response(message, 12);
     });
-    REQUIRE(loaded["result"].is_null());
+    REQUIRE(loaded["result"].is_object());
     const auto restored_messages = restored.messages();
     REQUIRE(std::any_of(
         restored_messages.begin(),
@@ -466,7 +470,6 @@ TEST_CASE("ACP server runs a complete prompt and restores it", "[acp][server]") 
         {"params", {
             {"sessionId", session_id},
             {"cwd", restored.workspace()},
-            {"mcpServers", Json::array()},
         }},
     });
     const Json resumed = restored.wait_for([](const Json& message) {
@@ -597,6 +600,85 @@ TEST_CASE("ACP server rejects unsupported MCP servers", "[acp][validation]") {
         return is_response(message, 2);
     });
     REQUIRE(rejected["error"]["code"] == -32602);
+    harness.stop();
+}
+
+TEST_CASE("ACP server validates protocol version range", "[acp][validation]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    ProtocolHarness harness{workspace.path(), provider};
+    harness.start();
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 1},
+        {"method", "initialize"},
+        {"params", {{"protocolVersion", -1}}},
+    });
+    const Json negative = harness.wait_for([](const Json& message) {
+        return is_response(message, 1);
+    });
+    REQUIRE(negative["error"]["code"] == -32602);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 2},
+        {"method", "initialize"},
+        {"params", {{"protocolVersion", 65536}}},
+    });
+    const Json too_large = harness.wait_for([](const Json& message) {
+        return is_response(message, 2);
+    });
+    REQUIRE(too_large["error"]["code"] == -32602);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "initialize"},
+        {"params", {{"protocolVersion", 2}}},
+    });
+    const Json negotiated = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    REQUIRE(negotiated["result"]["protocolVersion"] == 1);
+    harness.stop();
+}
+
+TEST_CASE("ACP server bounds active sessions", "[acp][session]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    ProtocolHarness harness{workspace.path(), provider, 1};
+    harness.start();
+    const std::string session_id = initialize_and_create(harness);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/new"},
+        {"params", {
+            {"cwd", harness.workspace()},
+            {"mcpServers", Json::array()},
+        }},
+    });
+    const Json full = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    REQUIRE(full["error"]["code"] == -32000);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 4},
+        {"method", "session/load"},
+        {"params", {
+            {"sessionId", session_id},
+            {"cwd", harness.workspace()},
+            {"mcpServers", Json::array()},
+        }},
+    });
+    const Json reloaded = harness.wait_for([](const Json& message) {
+        return is_response(message, 4);
+    });
+    REQUIRE(reloaded["result"].is_object());
     harness.stop();
 }
 

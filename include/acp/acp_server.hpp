@@ -7,6 +7,8 @@
 #include "config/agent_loader.hpp"
 #include "model/model.hpp"
 
+#include <chrono>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -22,6 +24,10 @@ struct AcpServerContext {
     agent::ISessionStore& session_store;
     /** @brief 本进程实际使用的模型名。 */
     std::string model_name;
+    /** @brief 权限反向请求的最长等待时间。 */
+    std::chrono::milliseconds permission_timeout{std::chrono::minutes{5}};
+    /** @brief 单连接允许同时加载的最大 Session 数。 */
+    std::size_t active_session_limit{64};
 };
 
 /**

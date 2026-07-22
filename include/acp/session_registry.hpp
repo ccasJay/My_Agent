@@ -5,6 +5,7 @@
 #include "config/agent_loader.hpp"
 #include "model/model.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,6 +20,12 @@ namespace swe_agent::acp {
 class AcpSessionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+};
+
+/** @brief ACP 连接已达到活动 Session 容量上限。 */
+class AcpSessionCapacityError : public AcpSessionError {
+public:
+    using AcpSessionError::AcpSessionError;
 };
 
 /** @brief 已加载到当前 ACP 进程的 Session。 */
@@ -49,7 +56,8 @@ public:
         model::IProvider& provider,
         config::AgentConfig agent_config,
         agent::ISessionStore& session_store,
-        std::string model_name);
+        std::string model_name,
+        std::size_t max_active_sessions = 64);
 
     /** @brief 创建并注册新 Session。 */
     [[nodiscard]] AcpActiveSession create(std::string_view cwd);
@@ -87,6 +95,7 @@ private:
     config::AgentConfig agent_config_;
     agent::ISessionStore& session_store_;
     std::string model_name_;
+    std::size_t max_active_sessions_;
     mutable std::mutex mutex_;
     std::unordered_map<agent::SessionId, AcpActiveSession> active_;
 };
