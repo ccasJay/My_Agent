@@ -1,13 +1,12 @@
 #include "acp/acp_server.hpp"
+#include "agent/assistant_text.hpp"
 
 #include <chrono>
-#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <time.h>
 #include <utility>
@@ -64,36 +63,6 @@ bool valid_protocol_version(const Json& version) {
         return value >= 0 && value <= 65535;
     }
     return false;
-}
-
-bool has_visible_text(std::string_view text) {
-    for (unsigned char character : text) {
-        if (!std::isspace(character)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::string strip_run_lines(std::string_view text) {
-    std::istringstream input{std::string{text}};
-    std::string output;
-    std::string line;
-    while (std::getline(input, line)) {
-        std::size_t first = 0;
-        while (first < line.size() &&
-               (line[first] == ' ' || line[first] == '\t')) {
-            ++first;
-        }
-        if (line.compare(first, 4, "RUN:") == 0) {
-            continue;
-        }
-        if (!output.empty()) {
-            output.push_back('\n');
-        }
-        output += line;
-    }
-    return output;
 }
 
 std::string encode_cursor(const agent::SessionListCursor& cursor) {
@@ -185,7 +154,7 @@ std::optional<std::string> flatten_prompt(const Json& blocks) {
         }
         prompt += content;
     }
-    if (!has_visible_text(prompt)) {
+    if (!agent::has_visible_text(prompt)) {
         return std::nullopt;
     }
     return prompt;
@@ -539,11 +508,11 @@ void AcpServer::replay_history(const agent::SessionSnapshot& snapshot) {
             content = message.content;
         } else if (message.kind == agent::SessionMessageKind::Assistant) {
             update_type = "agent_message_chunk";
-            content = strip_run_lines(message.content);
+            content = agent::strip_run_lines(message.content);
         } else {
             continue;
         }
-        if (!has_visible_text(content)) {
+        if (!agent::has_visible_text(content)) {
             continue;
         }
         connection_.send_notification("session/update", {

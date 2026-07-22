@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/assistant_text.hpp"
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
 #include "agent/history.hpp"
@@ -8,10 +9,8 @@
 #include "model/message.hpp"
 #include "model/model.hpp"
 
-#include <cctype>
 #include <cstddef>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
@@ -34,40 +33,6 @@ bool is_task_completed(std::string_view cmd) {
         cmd.remove_suffix(1);
     }
     return cmd == "echo COMPLETE_TASK";
-}
-
-bool is_run_line(std::string_view line) {
-    std::size_t i = 0;
-    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
-        ++i;
-    }
-    return line.substr(i).starts_with("RUN:");
-}
-
-/**
- * @brief 去掉所有 RUN: 行，得到给人看的结论正文
- */
-std::string strip_run_lines(const std::string& assistant_text) {
-    std::istringstream in(assistant_text);
-    std::string line;
-    std::string out;
-    while (std::getline(in, line)) {
-        if (is_run_line(line)) {
-            continue;
-        }
-        out += line;
-        out.push_back('\n');
-    }
-    return out;
-}
-
-bool has_nonempty_conclusion(std::string_view text) {
-    for (unsigned char c : text) {
-        if (!std::isspace(c)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 constexpr std::string_view kFormatHint =
@@ -238,7 +203,7 @@ AgentRunResult run(
         // 3) 完成信号：同轮必须有非空结论（去掉 RUN: 行后），再执行 COMPLETE 并退出
         if (is_task_completed(*cmd)) {
             const std::string conclusion = strip_run_lines(last.content);
-            if (!has_nonempty_conclusion(conclusion)) {
+            if (!has_visible_text(conclusion)) {
                 emit_event(options, AgentEventType::Assistant, step, last.content);
                 append_history(
                     history,

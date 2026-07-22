@@ -89,6 +89,17 @@ bool has_command_event(
 
 }  // namespace
 
+TEST_CASE("assistant text helpers share display semantics", "[agent_loop][text]") {
+    const std::string text =
+        "first\n"
+        "  RUN: echo hidden\n"
+        "second\n";
+
+    REQUIRE(swe_agent::agent::strip_run_lines(text) == "first\nsecond");
+    REQUIRE(swe_agent::agent::has_visible_text(" \n\tvisible"));
+    REQUIRE_FALSE(swe_agent::agent::has_visible_text(" \n\t"));
+}
+
 TEST_CASE("agent_loop maps provider cancellation to stopped", "[agent_loop]") {
     swe_agent::agent::StopSource stop_source;
     CancellableProvider provider{stop_source};

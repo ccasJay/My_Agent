@@ -1,12 +1,11 @@
 #include "acp/prompt_controller.hpp"
 
+#include "agent/assistant_text.hpp"
 #include "agent/command_authorization.hpp"
 #include "agent/shell.hpp"
 
-#include <cctype>
 #include <exception>
 #include <iostream>
-#include <sstream>
 #include <utility>
 
 namespace swe_agent::acp {
@@ -14,36 +13,6 @@ namespace {
 
 constexpr int kInternalError = -32603;
 constexpr std::string_view kCompletionCommand = "echo COMPLETE_TASK";
-
-bool has_visible_text(std::string_view text) {
-    for (unsigned char character : text) {
-        if (!std::isspace(character)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::string strip_run_lines(std::string_view text) {
-    std::istringstream input{std::string{text}};
-    std::string output;
-    std::string line;
-    while (std::getline(input, line)) {
-        std::size_t first = 0;
-        while (first < line.size() &&
-               (line[first] == ' ' || line[first] == '\t')) {
-            ++first;
-        }
-        if (line.compare(first, 4, "RUN:") == 0) {
-            continue;
-        }
-        if (!output.empty()) {
-            output.push_back('\n');
-        }
-        output += line;
-    }
-    return output;
-}
 
 std::string tool_title(std::string_view command) {
     constexpr std::size_t kMaxTitleBytes = 160;
@@ -421,8 +390,8 @@ void AcpPromptController::handle_event(
 
     if (event.type == AgentEventType::Assistant ||
         event.type == AgentEventType::Completed) {
-        const std::string content = strip_run_lines(event.content);
-        if (has_visible_text(content)) {
+        const std::string content = agent::strip_run_lines(event.content);
+        if (agent::has_visible_text(content)) {
             connection_.send_notification("session/update", {
                 {"sessionId", state->session_id},
                 {"update", {
