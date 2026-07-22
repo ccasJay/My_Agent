@@ -16,6 +16,7 @@
 #include <istream>
 #include <mutex>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <streambuf>
 #include <string>
@@ -227,6 +228,37 @@ private:
     bool released_{false};
 };
 
+class ThrowingSessionStore final : public swe_agent::agent::ISessionStore {
+public:
+    swe_agent::agent::SessionSnapshot create_session(
+        const swe_agent::agent::SessionSeed&) override {
+        throw swe_agent::agent::SessionStorageError{"database unavailable"};
+    }
+
+    void append_message(
+        std::string_view,
+        const swe_agent::agent::SessionMessage&) override {}
+
+    std::optional<swe_agent::agent::SessionSnapshot> load_session(
+        std::string_view) override {
+        throw swe_agent::agent::SessionStorageError{"database unavailable"};
+    }
+
+    std::optional<swe_agent::agent::SessionSnapshot> latest_session(
+        std::string_view) override {
+        return std::nullopt;
+    }
+
+    swe_agent::agent::SessionListPage list_sessions_page(
+        const swe_agent::agent::SessionListQuery&) override {
+        throw swe_agent::agent::SessionStorageError{"database unavailable"};
+    }
+
+    void reset_session(std::string_view, std::string_view) override {}
+    void update_model(std::string_view, std::string_view) override {}
+    void archive_session(std::string_view) override {}
+};
+
 std::vector<Json> parse_complete_messages(std::string_view output) {
     std::vector<Json> messages;
     std::size_t start = 0;
@@ -251,7 +283,8 @@ public:
         FakeProvider& provider,
         std::size_t active_session_limit = 64,
         std::chrono::milliseconds permission_timeout =
-            std::chrono::minutes{5})
+            std::chrono::minutes{5},
+        std::size_t step_limit = 5)
         : workspace_(workspace.string()),
           store_(workspace / "agent.db"),
           connection_(input_, output_),
@@ -262,7 +295,7 @@ public:
                   .agent_config = {
                       .system_prompt = "system",
                       .user_prompt = "unused",
-                      .step_limit = 5,
+                      .step_limit = step_limit,
                   },
                   .session_store = store_,
                   .model_name = "fake-model",
@@ -397,16 +430,28 @@ TEST_CASE("ACP server runs a complete prompt and restores it", "[acp][server]") 
         REQUIRE(completed["result"]["stopReason"] == "end_turn");
 
         const auto messages = harness.messages();
-        REQUIRE(std::any_of(messages.begin(), messages.end(), [](const Json& message) {
-            return is_method(message, "session/update") &&
-                message["params"]["update"].value("sessionUpdate", "") ==
-                    "tool_call";
-        }));
-        REQUIRE(std::any_of(messages.begin(), messages.end(), [](const Json& message) {
-            return is_method(message, "session/update") &&
-                message["params"]["update"].value("status", "") ==
-                    "completed";
-        }));
+        const auto tool_call = std::find_if(
+            messages.begin(),
+            messages.end(),
+            [](const Json& message) {
+                return is_method(message, "session/update") &&
+                    message["params"]["update"].value("sessionUpdate", "") ==
+                        "tool_call";
+            });
+        REQUIRE(tool_call != messages.end());
+        const std::string tool_id =
+            (*tool_call)["params"]["update"]["toolCallId"].get<std::string>();
+        std::vector<std::string> statuses;
+        for (const auto& message : messages) {
+            if (!is_method(message, "session/update") ||
+                message["params"]["update"].value("toolCallId", "") != tool_id) {
+                continue;
+            }
+            statuses.push_back(
+                message["params"]["update"].value("status", ""));
+        }
+        REQUIRE(statuses == std::vector<std::string>{
+            "pending", "in_progress", "completed"});
         harness.stop();
     }
 
@@ -618,6 +663,55 @@ TEST_CASE("ACP server times out unanswered permission", "[acp][permission]") {
     harness.stop();
 }
 
+TEST_CASE("ACP server rejects a reviewed command once", "[acp][permission]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    provider.set_responses({
+        "Review\nRUN: sh -c 'echo forbidden > rejected-marker'\n",
+        "Conclusion: rejected\nRUN: echo COMPLETE_TASK\n",
+    });
+    ProtocolHarness harness{workspace.path(), provider};
+    harness.start();
+    const std::string session_id = initialize_and_create(harness);
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/prompt"},
+        {"params", {
+            {"sessionId", session_id},
+            {"prompt", Json::array({{{"type", "text"}, {"text", "reject"}}})},
+        }},
+    });
+    const Json permission = harness.wait_for([](const Json& message) {
+        return is_method(message, "session/request_permission");
+    });
+    const std::string tool_id =
+        permission["params"]["toolCall"]["toolCallId"].get<std::string>();
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", permission["id"]},
+        {"result", {
+            {"outcome", {
+                {"outcome", "selected"},
+                {"optionId", "reject-once"},
+            }},
+        }},
+    });
+
+    (void)harness.wait_for([&tool_id](const Json& message) {
+        return is_method(message, "session/update") &&
+            message["params"]["update"].value("toolCallId", "") == tool_id &&
+            message["params"]["update"].value("status", "") == "failed";
+    });
+    const Json completed = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    REQUIRE(completed["result"]["stopReason"] == "end_turn");
+    REQUIRE_FALSE(
+        std::filesystem::exists(workspace.path() / "rejected-marker"));
+    harness.stop();
+}
+
 TEST_CASE("ACP server rejects concurrent prompts and honours cancellation", "[acp][cancel]") {
     TempWorkspace workspace;
     FakeProvider provider;
@@ -661,6 +755,133 @@ TEST_CASE("ACP server rejects concurrent prompts and honours cancellation", "[ac
     });
     REQUIRE(cancelled["result"]["stopReason"] == "cancelled");
     harness.stop();
+}
+
+TEST_CASE("ACP server enforces global prompt ownership", "[acp][cancel]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    provider.set_responses({"Conclusion: late\nRUN: echo COMPLETE_TASK\n"});
+    provider.block_queries();
+    ProtocolHarness harness{workspace.path(), provider};
+    harness.start();
+    const std::string first_session = initialize_and_create(harness);
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/new"},
+        {"params", {
+            {"cwd", harness.workspace()},
+            {"mcpServers", Json::array()},
+        }},
+    });
+    const Json second = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    const std::string second_session =
+        second["result"]["sessionId"].get<std::string>();
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 4},
+        {"method", "session/prompt"},
+        {"params", {
+            {"sessionId", first_session},
+            {"prompt", Json::array({{{"type", "text"}, {"text", "wait"}}})},
+        }},
+    });
+    provider.wait_until_queried();
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 5},
+        {"method", "session/prompt"},
+        {"params", {
+            {"sessionId", second_session},
+            {"prompt", Json::array({{{"type", "text"}, {"text", "busy"}}})},
+        }},
+    });
+    const Json global_busy = harness.wait_for([](const Json& message) {
+        return is_response(message, 5);
+    });
+    REQUIRE(global_busy["error"]["code"] == -32000);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 6},
+        {"method", "session/load"},
+        {"params", {
+            {"sessionId", first_session},
+            {"cwd", harness.workspace()},
+            {"mcpServers", Json::array()},
+        }},
+    });
+    const Json load_busy = harness.wait_for([](const Json& message) {
+        return is_response(message, 6);
+    });
+    REQUIRE(load_busy["error"]["code"] == -32000);
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"method", "session/cancel"},
+        {"params", {{"sessionId", first_session}}},
+    });
+    provider.release();
+    const Json cancelled = harness.wait_for([](const Json& message) {
+        return is_response(message, 4);
+    });
+    REQUIRE(cancelled["result"]["stopReason"] == "cancelled");
+    harness.stop();
+}
+
+TEST_CASE("ACP server maps terminal stop reasons", "[acp][server]") {
+    SECTION("empty response becomes refusal") {
+        TempWorkspace workspace;
+        FakeProvider provider;
+        ProtocolHarness harness{workspace.path(), provider};
+        harness.start();
+        const std::string session_id = initialize_and_create(harness);
+        harness.send({
+            {"jsonrpc", "2.0"},
+            {"id", 3},
+            {"method", "session/prompt"},
+            {"params", {
+                {"sessionId", session_id},
+                {"prompt", Json::array({{{"type", "text"}, {"text", "empty"}}})},
+            }},
+        });
+        const Json response = harness.wait_for([](const Json& message) {
+            return is_response(message, 3);
+        });
+        REQUIRE(response["result"]["stopReason"] == "refusal");
+        harness.stop();
+    }
+
+    SECTION("step limit becomes max turn requests") {
+        TempWorkspace workspace;
+        FakeProvider provider;
+        provider.set_responses({"No command"});
+        ProtocolHarness harness{
+            workspace.path(),
+            provider,
+            64,
+            std::chrono::minutes{5},
+            1};
+        harness.start();
+        const std::string session_id = initialize_and_create(harness);
+        harness.send({
+            {"jsonrpc", "2.0"},
+            {"id", 3},
+            {"method", "session/prompt"},
+            {"params", {
+                {"sessionId", session_id},
+                {"prompt", Json::array({{{"type", "text"}, {"text", "limit"}}})},
+            }},
+        });
+        const Json response = harness.wait_for([](const Json& message) {
+            return is_response(message, 3);
+        });
+        REQUIRE(response["result"]["stopReason"] == "max_turn_requests");
+        harness.stop();
+    }
 }
 
 TEST_CASE("ACP server rejects unsupported MCP servers", "[acp][validation]") {
@@ -776,6 +997,17 @@ TEST_CASE("ACP server bounds active sessions", "[acp][session]") {
         return is_response(message, 4);
     });
     REQUIRE(reloaded["result"].is_object());
+
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 5},
+        {"method", "session/list"},
+        {"params", Json::object()},
+    });
+    const Json listed = harness.wait_for([](const Json& message) {
+        return is_response(message, 5);
+    });
+    REQUIRE(listed["result"]["sessions"][0]["sessionId"] == session_id);
     harness.stop();
 }
 
@@ -815,4 +1047,52 @@ TEST_CASE("ACP server cannot override a denied command", "[acp][permission]") {
             return is_method(message, "session/request_permission");
         }));
     harness.stop();
+}
+
+TEST_CASE("ACP server maps storage failures consistently", "[acp][error]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    ThrowingSessionStore store;
+    std::ostringstream protocol;
+    protocol
+        << Json{
+            {"jsonrpc", "2.0"},
+            {"id", 1},
+            {"method", "initialize"},
+            {"params", {{"protocolVersion", 1}}},
+        }.dump() << '\n'
+        << Json{
+            {"jsonrpc", "2.0"},
+            {"id", 2},
+            {"method", "session/new"},
+            {"params", {
+                {"cwd", workspace.path().string()},
+                {"mcpServers", Json::array()},
+            }},
+        }.dump() << '\n';
+    std::istringstream input{protocol.str()};
+    std::ostringstream output;
+    swe_agent::acp::JsonRpcConnection connection{input, output};
+    swe_agent::acp::AcpServer server{
+        connection,
+        {
+            .provider = provider,
+            .agent_config = {
+                .system_prompt = "system",
+                .user_prompt = "unused",
+                .step_limit = 5,
+            },
+            .session_store = store,
+            .model_name = "fake-model",
+        }};
+
+    REQUIRE(server.run() == 0);
+    const auto messages = parse_complete_messages(output.str());
+    const auto error = std::find_if(
+        messages.begin(),
+        messages.end(),
+        [](const Json& message) { return is_response(message, 2); });
+    REQUIRE(error != messages.end());
+    REQUIRE((*error)["error"]["code"] == -32603);
+    REQUIRE((*error)["error"]["message"] == "Session storage error");
 }
