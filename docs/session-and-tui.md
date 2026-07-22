@@ -15,16 +15,22 @@
 workspace 是启动时当前目录的规范化绝对路径。列表、最新会话和恢复均按
 workspace 隔离，不会自动使用其他项目目录的记录。
 
-### TUI Session 命令
+### TUI 斜杠命令
+
+TUI 在空闲提交路径上通过 `SlashRegistry` 解析以 `/` 开头的元命令；匹配的
+命令不会进入 Agent Loop，也不会写入 User 历史。内置命令在进程内显式注册，
+扩展时新增 handler 并 `register_command` 即可。
 
 | 命令 | 行为 |
 | --- | --- |
+| `/help` | 列出已注册斜杠命令的用法与摘要 |
 | `/new` | 创建并切换到新 Session |
 | `/sessions` | 列出当前 workspace 最近的 Session，显示 8 位 ID 前缀、标题和模型 |
 | `/resume <id-prefix>` | 恢复唯一匹配的 Session；前缀至少 8 个字符 |
 
 命令两侧空白会被去除。`/resume` 缺少参数、参数含空白或未知 `/` 命令会
-显示错误 notice。任务运行期间输入区不接受新的 Session 命令。
+显示错误 notice（标题 `Session command`）。任务运行期间输入区不接受新的
+斜杠命令。
 
 ## 信号轨界面
 
