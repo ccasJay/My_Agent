@@ -34,7 +34,23 @@ struct FakeProvider {
     }
 };
 
+struct CancellableProvider {
+    swe_agent::agent::StopSource& stop_source;
+
+    swe_agent::model::ModelResponse query(const swe_agent::model::MSG&) {
+        return {"unused"};
+    }
+
+    swe_agent::model::ModelResponse query(
+        const swe_agent::model::MSG&,
+        swe_agent::agent::StopToken) {
+        stop_source.request_stop();
+        throw swe_agent::agent::OperationCancelled{};
+    }
+};
+
 static_assert(swe_agent::model::Provider<FakeProvider>);
+static_assert(swe_agent::model::Provider<CancellableProvider>);
 
 swe_agent::config::AgentConfig make_cfg(
     std::size_t step_limit = 10,
@@ -72,6 +88,35 @@ bool has_command_event(
 }
 
 }  // namespace
+
+TEST_CASE("assistant text helpers share display semantics", "[agent_loop][text]") {
+    const std::string text =
+        "first\n"
+        "  RUN: echo hidden\n"
+        "second\n";
+
+    REQUIRE(swe_agent::agent::strip_run_lines(text) == "first\nsecond");
+    REQUIRE(swe_agent::agent::has_visible_text(" \n\tvisible"));
+    REQUIRE_FALSE(swe_agent::agent::has_visible_text(" \n\t"));
+}
+
+TEST_CASE("agent_loop maps provider cancellation to stopped", "[agent_loop]") {
+    swe_agent::agent::StopSource stop_source;
+    CancellableProvider provider{stop_source};
+    std::vector<swe_agent::agent::AgentEvent> events;
+    swe_agent::agent::AgentRunOptions options{
+        .on_event = [&events](const swe_agent::agent::AgentEvent& event) {
+            events.push_back(event);
+        },
+        .stop_token = stop_source.token(),
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), options);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Stopped);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events.front().type == swe_agent::agent::AgentEventType::Stopped);
+}
 
 TEST_CASE("agent_loop respects step_limit after one shell observation", "[agent_loop]") {
     FakeProvider provider;
@@ -256,8 +301,10 @@ TEST_CASE("agent_loop emits ordered events for command and completion", "[agent_
     REQUIRE(events[0].type == AgentEventType::Assistant);
     REQUIRE(events[1].type == AgentEventType::CommandStarted);
     REQUIRE(events[2].type == AgentEventType::CommandFinished);
+    REQUIRE(events[2].command_succeeded == true);
     REQUIRE(events[3].type == AgentEventType::CommandStarted);
     REQUIRE(events[4].type == AgentEventType::CommandFinished);
+    REQUIRE(events[4].command_succeeded == true);
     REQUIRE(events[5].type == AgentEventType::Completed);
     REQUIRE(events[0].step == 0);
     REQUIRE(events[3].step == 1);

@@ -155,6 +155,53 @@ TEST_CASE("sqlite store lists the latest session per workspace", "[session_store
     REQUIRE(sessions[1].id == first.metadata.id);
 }
 
+TEST_CASE("sqlite store paginates sessions across workspaces", "[session_store]") {
+    TempDatabase database;
+    swe_agent::agent::SqliteSessionStore store{database.path()};
+    const auto first = store.create_session({
+        .workspace = "/tmp/project-a",
+        .model_name = "model-a",
+        .system_prompt = "system",
+        .step_limit = 3,
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    const auto second = store.create_session({
+        .workspace = "/tmp/project-b",
+        .model_name = "model-b",
+        .system_prompt = "system",
+        .step_limit = 3,
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    const auto third = store.create_session({
+        .workspace = "/tmp/project-a",
+        .model_name = "model-c",
+        .system_prompt = "system",
+        .step_limit = 3,
+    });
+
+    const auto first_page = store.list_sessions_page({.limit = 2});
+    REQUIRE(first_page.sessions.size() == 2);
+    REQUIRE(first_page.sessions[0].id == third.metadata.id);
+    REQUIRE(first_page.sessions[1].id == second.metadata.id);
+    REQUIRE(first_page.next_cursor.has_value());
+
+    const auto second_page = store.list_sessions_page({
+        .before = first_page.next_cursor,
+        .limit = 2,
+    });
+    REQUIRE(second_page.sessions.size() == 1);
+    REQUIRE(second_page.sessions[0].id == first.metadata.id);
+    REQUIRE_FALSE(second_page.next_cursor.has_value());
+
+    const auto filtered = store.list_sessions_page({
+        .workspace = "/tmp/project-a",
+        .limit = 10,
+    });
+    REQUIRE(filtered.sessions.size() == 2);
+    REQUIRE(filtered.sessions[0].id == third.metadata.id);
+    REQUIRE(filtered.sessions[1].id == first.metadata.id);
+}
+
 TEST_CASE("sqlite store excludes archived sessions", "[session_store]") {
     TempDatabase database;
     swe_agent::agent::SqliteSessionStore store{database.path()};

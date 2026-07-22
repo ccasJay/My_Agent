@@ -38,9 +38,8 @@ public:
         std::string_view id) override;
     [[nodiscard]] std::optional<SessionSnapshot> latest_session(
         std::string_view workspace) override;
-    [[nodiscard]] std::vector<SessionSummary> list_sessions(
-        std::string_view workspace,
-        std::size_t limit) override;
+    [[nodiscard]] SessionListPage list_sessions_page(
+        const SessionListQuery& query) override;
     void reset_session(
         std::string_view id,
         std::string_view system_prompt) override;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Reconfigure, rebuild, and install the local `agent` executable.
+# 重新配置、构建并安装本地 Agent 可执行程序。
 set -euo pipefail
 
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,3 +15,4 @@ cmake --build "${BUILD_DIR}" --parallel
 cmake --install "${BUILD_DIR}"
 
 echo "Installed: ${INSTALL_PREFIX}/bin/agent"
+echo "Installed: ${INSTALL_PREFIX}/bin/agent-acp"

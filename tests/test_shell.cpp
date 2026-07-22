@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include "agent/shell.hpp"
 
+#include <chrono>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 
 using swe_agent::agent::extract_run_command;
 using swe_agent::agent::format_process_result;
@@ -117,5 +120,50 @@ TEST_CASE("run_shell executes commands and formats output", "[shell]") {
         REQUIRE(result.success());
         REQUIRE(result.truncated);
         REQUIRE(result.output.size() == 16 * 1024);
+    }
+
+    SECTION("explicit working directory is isolated to the child") {
+        const auto original = std::filesystem::current_path();
+        const auto directory = std::filesystem::temp_directory_path() /
+            ("swe-agent-shell-" + std::to_string(
+                std::chrono::steady_clock::now()
+                    .time_since_epoch()
+                    .count()));
+        std::filesystem::create_directories(directory);
+
+        const auto result = run_shell("pwd", directory);
+
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(directory, cleanup_error);
+        REQUIRE(result.success());
+        REQUIRE(result.output.find(directory.string()) != std::string::npos);
+        REQUIRE(std::filesystem::current_path() == original);
+    }
+
+    SECTION("child standard input is disconnected from the host") {
+        const auto result = run_shell(
+            "if read value; then echo unexpected; else echo eof; fi");
+
+        REQUIRE(result.success());
+        REQUIRE(result.output.find("eof") != std::string::npos);
+        REQUIRE(result.output.find("unexpected") == std::string::npos);
+    }
+
+    SECTION("stop token terminates the complete process group") {
+        swe_agent::agent::StopSource stop_source;
+        std::thread stopper([&stop_source] {
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+            stop_source.request_stop();
+        });
+        const auto started = std::chrono::steady_clock::now();
+        const auto result = run_shell(
+            "trap '' TERM; sleep 30",
+            std::filesystem::current_path(),
+            stop_source.token());
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        stopper.join();
+
+        REQUIRE_FALSE(result.success());
+        REQUIRE(elapsed < std::chrono::seconds{3});
     }
 }

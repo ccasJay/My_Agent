@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(swe_agent LANGUAGES CXX)
+project(swe_agent VERSION 0.1.0 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -89,6 +89,28 @@ target_compile_options(swe_agent_tui_support PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
 
+add_library(swe_agent_acp_support
+    src/acp_json_rpc.cpp
+    src/acp_prompt_controller.cpp
+    src/acp_server.cpp
+    src/acp_session_registry.cpp
+)
+target_include_directories(swe_agent_acp_support
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(swe_agent_acp_support
+    PUBLIC
+        swe_agent_core
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+)
+target_compile_definitions(swe_agent_acp_support
+    PRIVATE SWE_AGENT_VERSION="${PROJECT_VERSION}"
+)
+target_compile_options(swe_agent_acp_support PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+)
+
 add_executable(swe-agent
     src/main.cpp
     src/cli.cpp
@@ -107,7 +129,20 @@ target_compile_options(swe-agent PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
 
-install(TARGETS swe-agent
+add_executable(swe-agent-acp
+    src/acp_main.cpp
+    src/acp_cli.cpp
+)
+set_target_properties(swe-agent-acp PROPERTIES OUTPUT_NAME agent-acp)
+target_link_libraries(swe-agent-acp PRIVATE
+    swe_agent_acp_support
+    CLI11::CLI11
+)
+target_compile_options(swe-agent-acp PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+)
+
+install(TARGETS swe-agent swe-agent-acp
     RUNTIME DESTINATION bin
 )
 

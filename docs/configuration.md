@@ -8,7 +8,7 @@
 
 1. `.env`：endpoint、API key 和默认模型名；
 2. `config/agent.yaml`：Prompt 与 Agent step limit；
-3. CLI 参数：本次运行的模式、模型覆盖和 Session 恢复方式。
+3. CLI 参数：本次运行的模式、模型覆盖、Session 恢复方式或 ACP 配置路径。
 
 程序只从当前工作目录和它的上一级目录寻找 `.env` 与
 `config/agent.yaml`。文件不存在时，程序在初始化模型或界面前直接报错。
@@ -75,6 +75,8 @@ YAML 的该字段改变实际请求模型。这是当前实现边界，不是配
 
 ## CLI 参数
 
+### `agent`
+
 | 参数 | 行为 |
 | --- | --- |
 | `-t TEXT` | 进入 Console 模式并提交一次任务；参数是否出现决定模式 |
@@ -97,6 +99,20 @@ Session：默认新建；出现 -c 时恢复当前工作区最新记录
 
 恢复 Session 时，保存的 System Prompt 随历史恢复；step limit 使用当前
 配置，模型名使用本次 `.env` 或 `-m` 的结果。
+
+### `agent-acp`
+
+| 参数 | 行为 |
+| --- | --- |
+| `--env-file PATH` | 指定 dotenv 文件；未提供时检查 `.env`、`../.env` |
+| `--agent-config PATH` | 指定 YAML；未提供时检查 `config/agent.yaml`、`../config/agent.yaml` |
+| `-m, --model NAME` | 覆盖本次 ACP 进程使用的模型名 |
+| `-h, --help` | 显示帮助并退出 |
+
+显式路径不会改变 Session 数据目录。ACP Session 仍与 `agent` 共用同一个
+SQLite 数据库；模型覆盖会在 load/resume 时更新持久化 metadata，但历史中
+保存的 System Prompt 不会被当前 YAML 替换。协议字段和限制见
+[ACP 接入指南](acp-integration.md)。
 
 ## Session 数据目录
 

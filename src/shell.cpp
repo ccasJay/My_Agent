@@ -1,11 +1,17 @@
 #include "agent/shell.hpp"
 
 #include <array>
-#include <cstdio>
-#include <memory>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
+#include <unistd.h>
 
 namespace swe_agent::agent {
 namespace {
@@ -21,6 +27,18 @@ std::string trim_right_newlines(std::string s) {
         s.pop_back();
     }
     return s;
+}
+
+bool set_close_on_exec(int descriptor) {
+    const int flags = ::fcntl(descriptor, F_GETFD);
+    return flags >= 0 &&
+        ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+void signal_process_group(pid_t child, int signal_number) {
+    if (::kill(-child, signal_number) != 0 && errno == ESRCH) {
+        (void)::kill(child, signal_number);
+    }
 }
 
 }  // namespace
@@ -69,6 +87,29 @@ std::optional<std::string> extract_run_command(const std::string& assistant_text
  * @return ProcessResult
  */
 ProcessResult run_shell(const std::string& command) {
+    std::error_code error;
+    const std::filesystem::path working_directory =
+        std::filesystem::current_path(error);
+    if (error) {
+        ProcessResult result;
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message =
+            "[shell] unable to determine the current working directory";
+        return result;
+    }
+    return run_shell(command, working_directory);
+}
+
+ProcessResult run_shell(
+    const std::string& command,
+    const std::filesystem::path& working_directory) {
+    return run_shell(command, working_directory, {});
+}
+
+ProcessResult run_shell(
+    const std::string& command,
+    const std::filesystem::path& working_directory,
+    StopToken stop_token) {
     ProcessResult result;
 
     if (command.empty()) {
@@ -77,35 +118,165 @@ ProcessResult run_shell(const std::string& command) {
         return result;
     }
 
-    // stderr 并入 stdout，便于整段作为 observation
-    const std::string full = command + " 2>&1";
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(full.c_str(), "r"), pclose);
-    if (!pipe) {
+    if (stop_token.stop_requested()) {
         result.termination = TerminationKind::ExecutionError;
-        result.error_message = "[shell] popen failed for: " + command;
+        result.error_message = "[shell] cancelled before execution";
         return result;
     }
 
+    int pipe_fds[2];
+    if (::pipe(pipe_fds) != 0) {
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] pipe failed: " +
+            std::string{std::strerror(errno)};
+        return result;
+    }
+    if (!set_close_on_exec(pipe_fds[0]) ||
+        !set_close_on_exec(pipe_fds[1])) {
+        const int saved_errno = errno;
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] fcntl failed: " +
+            std::string{std::strerror(saved_errno)};
+        return result;
+    }
+
+    const int null_input = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (null_input < 0) {
+        const int saved_errno = errno;
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] open /dev/null failed: " +
+            std::string{std::strerror(saved_errno)};
+        return result;
+    }
+    long maximum_descriptor = ::sysconf(_SC_OPEN_MAX);
+    if (maximum_descriptor < 0) {
+        maximum_descriptor = 1024;
+    }
+
+    const pid_t child = ::fork();
+    if (child < 0) {
+        const int saved_errno = errno;
+        ::close(null_input);
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] fork failed: " +
+            std::string{std::strerror(saved_errno)};
+        return result;
+    }
+
+    if (child == 0) {
+        (void)::setpgid(0, 0);
+        ::close(pipe_fds[0]);
+        if (::dup2(null_input, STDIN_FILENO) < 0 ||
+            ::dup2(pipe_fds[1], STDOUT_FILENO) < 0 ||
+            ::dup2(pipe_fds[1], STDERR_FILENO) < 0) {
+            ::_exit(127);
+        }
+        for (int descriptor = STDERR_FILENO + 1;
+             descriptor < maximum_descriptor;
+             ++descriptor) {
+            ::close(descriptor);
+        }
+
+        if (::chdir(working_directory.c_str()) != 0) {
+            constexpr char kMessage[] = "[shell] chdir failed\n";
+            (void)::write(STDERR_FILENO, kMessage, sizeof(kMessage) - 1);
+            ::_exit(126);
+        }
+        ::execl("/bin/sh", "sh", "-c", command.c_str(), nullptr);
+        constexpr char kMessage[] = "[shell] exec failed\n";
+        (void)::write(STDERR_FILENO, kMessage, sizeof(kMessage) - 1);
+        ::_exit(127);
+    }
+
+    ::close(null_input);
+    ::close(pipe_fds[1]);
+    if (::setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
+        result.error_message = "[shell] setpgid failed: " +
+            std::string{std::strerror(errno)};
+    }
     std::array<char, 512> buf{};
     constexpr std::size_t kMaxBytes = 16 * 1024;
-    while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()) != nullptr) {
-        if (result.truncated) {
-            // 仍需排空管道，否则高输出子进程可能阻塞在 write，pclose 也会一直等待。
+    constexpr auto kPollInterval = std::chrono::milliseconds{50};
+    constexpr auto kTerminationGrace = std::chrono::seconds{1};
+    bool termination_requested = false;
+    bool force_killed = false;
+    std::chrono::steady_clock::time_point force_kill_at{};
+    while (true) {
+        if (stop_token.stop_requested() && !termination_requested) {
+            signal_process_group(child, SIGTERM);
+            termination_requested = true;
+            force_kill_at = std::chrono::steady_clock::now() +
+                kTerminationGrace;
+        }
+        if (termination_requested && !force_killed &&
+            std::chrono::steady_clock::now() >= force_kill_at) {
+            signal_process_group(child, SIGKILL);
+            force_killed = true;
+        }
+
+        pollfd descriptor{
+            .fd = pipe_fds[0],
+            .events = POLLIN | POLLHUP,
+            .revents = 0,
+        };
+        const int poll_result = ::poll(
+            &descriptor,
+            1,
+            static_cast<int>(kPollInterval.count()));
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            result.error_message = "[shell] poll failed: " +
+                std::string{std::strerror(errno)};
+            signal_process_group(child, SIGKILL);
+            break;
+        }
+        if (poll_result == 0) {
             continue;
         }
-        result.output.append(buf.data());
+
+        const ssize_t count = ::read(pipe_fds[0], buf.data(), buf.size());
+        if (count == 0) {
+            break;
+        }
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            result.error_message = "[shell] read failed: " +
+                std::string{std::strerror(errno)};
+            signal_process_group(child, SIGKILL);
+            break;
+        }
+        if (result.truncated) {
+            // 仍需排空管道，否则高输出子进程可能阻塞在 write。
+            continue;
+        }
+        result.output.append(buf.data(), static_cast<std::size_t>(count));
         if (result.output.size() > kMaxBytes) {
             result.output.resize(kMaxBytes);
             result.truncated = true;
         }
     }
+    ::close(pipe_fds[0]);
 
-    // 需要 exit status：先 release 再 pclose（否则 unique_ptr 析构也会 pclose）
-    FILE* raw = pipe.release();
-    const int status = pclose(raw);
-    if (status == -1) {
+    int status = 0;
+    pid_t waited = 0;
+    do {
+        waited = ::waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+
+    if (waited < 0) {
         result.termination = TerminationKind::ExecutionError;
-        result.error_message = "[shell] pclose failed for: " + command;
+        result.error_message = "[shell] waitpid failed: " +
+            std::string{std::strerror(errno)};
     } else if (WIFEXITED(status)) {
         result.termination = TerminationKind::Exited;
         result.exit_code = WEXITSTATUS(status);

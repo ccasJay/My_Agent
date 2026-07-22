@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/assistant_text.hpp"
 #include "agent/agent_event.hpp"
 #include "agent/agent_run_result.hpp"
 #include "agent/history.hpp"
@@ -8,9 +9,8 @@
 #include "model/message.hpp"
 #include "model/model.hpp"
 
-#include <cctype>
 #include <cstddef>
-#include <sstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
@@ -35,40 +35,6 @@ bool is_task_completed(std::string_view cmd) {
     return cmd == "echo COMPLETE_TASK";
 }
 
-bool is_run_line(std::string_view line) {
-    std::size_t i = 0;
-    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
-        ++i;
-    }
-    return line.substr(i).starts_with("RUN:");
-}
-
-/**
- * @brief 去掉所有 RUN: 行，得到给人看的结论正文
- */
-std::string strip_run_lines(const std::string& assistant_text) {
-    std::istringstream in(assistant_text);
-    std::string line;
-    std::string out;
-    while (std::getline(in, line)) {
-        if (is_run_line(line)) {
-            continue;
-        }
-        out += line;
-        out.push_back('\n');
-    }
-    return out;
-}
-
-bool has_nonempty_conclusion(std::string_view text) {
-    for (unsigned char c : text) {
-        if (!std::isspace(c)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 constexpr std::string_view kFormatHint =
     "Host: no valid RUN: line found.\n"
     "If work remains: RUN: <command>\n"
@@ -86,7 +52,8 @@ void emit_event(
     std::size_t step,
     std::string content = {},
     std::string command = {},
-    std::string rule_id = {}) {
+    std::string rule_id = {},
+    std::optional<bool> command_succeeded = std::nullopt) {
     if (options.on_event) {
         options.on_event(AgentEvent{
             .type = type,
@@ -94,8 +61,24 @@ void emit_event(
             .content = std::move(content),
             .command = std::move(command),
             .rule_id = std::move(rule_id),
+            .command_succeeded = command_succeeded,
         });
     }
+}
+
+ProcessResult execute_shell(
+    const AgentRunOptions& options,
+    const std::string& command) {
+    if (options.shell_executor) {
+        return options.shell_executor(command);
+    }
+    std::error_code error;
+    const std::filesystem::path working_directory =
+        std::filesystem::current_path(error);
+    if (error) {
+        return run_shell(command);
+    }
+    return run_shell(command, working_directory, options.stop_token);
 }
 
 bool should_stop(const AgentRunOptions& options) {
@@ -174,7 +157,13 @@ AgentRunResult run(
             break;
         }
 
-        last = provider.query(history);
+        try {
+            last = model::query_provider(provider, history, options.stop_token);
+        } catch (const OperationCancelled&) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
         if (should_stop(options)) {
             emit_event(options, AgentEventType::Stopped, step);
             status = AgentRunStatus::Stopped;
@@ -214,7 +203,7 @@ AgentRunResult run(
         // 3) 完成信号：同轮必须有非空结论（去掉 RUN: 行后），再执行 COMPLETE 并退出
         if (is_task_completed(*cmd)) {
             const std::string conclusion = strip_run_lines(last.content);
-            if (!has_nonempty_conclusion(conclusion)) {
+            if (!has_visible_text(conclusion)) {
                 emit_event(options, AgentEventType::Assistant, step, last.content);
                 append_history(
                     history,
@@ -241,14 +230,16 @@ AgentRunResult run(
                 step,
                 {},
                 *cmd);
-            const ProcessResult process_result = run_shell(*cmd);
+            const ProcessResult process_result = execute_shell(options, *cmd);
             const std::string observation = format_process_result(*cmd, process_result);
             emit_event(
                 options,
                 AgentEventType::CommandFinished,
                 step,
                 observation,
-                *cmd);
+                *cmd,
+                {},
+                process_result.success());
             // 停止可能在 Shell 阻塞期间到达；此时 Stopped 必须优先于 Completed。
             if (should_stop(options)) {
                 emit_event(options, AgentEventType::Stopped, step);
@@ -307,14 +298,16 @@ AgentRunResult run(
             step,
             {},
             *cmd);
-        const ProcessResult process_result = run_shell(*cmd);
+        const ProcessResult process_result = execute_shell(options, *cmd);
         const std::string observation = format_process_result(*cmd, process_result);
         emit_event(
             options,
             AgentEventType::CommandFinished,
             step,
             observation,
-            *cmd);
+            *cmd,
+            {},
+            process_result.success());
 
         // 前缀方便模型/人阅读；Role::User 兼容未接 tool_calls 的 API
         append_history(

@@ -61,10 +61,15 @@ void execute(sqlite3* database, const char* sql) {
 
 class Statement {
 public:
-    Statement(sqlite3* database, const char* sql) : database_(database) {
+    Statement(sqlite3* database, std::string_view sql) : database_(database) {
         check(
             database_,
-            sqlite3_prepare_v2(database_, sql, -1, &statement_, nullptr),
+            sqlite3_prepare_v2(
+                database_,
+                sql.data(),
+                static_cast<int>(sql.size()),
+                &statement_,
+                nullptr),
             "prepare SQL");
     }
 
@@ -480,20 +485,47 @@ std::optional<SessionSnapshot> SqliteSessionStore::latest_session(
     return load_session(query.text(0));
 }
 
-std::vector<SessionSummary> SqliteSessionStore::list_sessions(
-    std::string_view workspace,
-    std::size_t limit) {
-    Statement query{
-        impl_->database,
-        "SELECT id, title, workspace, model_name, updated_at_ms "
-        "FROM sessions WHERE workspace = ? AND archived_at_ms IS NULL "
-        "ORDER BY updated_at_ms DESC, id DESC LIMIT ?"};
-    query.bind(1, workspace);
-    query.bind(2, static_cast<std::int64_t>(limit));
+SessionListPage SqliteSessionStore::list_sessions_page(
+    const SessionListQuery& request) {
+    if (request.limit == 0 ||
+        request.limit > static_cast<std::size_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        throw SessionStorageError{"Session list limit is out of range"};
+    }
+    if (request.before.has_value() && request.before->id.empty()) {
+        throw SessionStorageError{"Session list cursor has an empty id"};
+    }
 
-    std::vector<SessionSummary> sessions;
+    std::string sql =
+        "SELECT id, title, workspace, model_name, updated_at_ms "
+        "FROM sessions WHERE archived_at_ms IS NULL ";
+    if (request.workspace.has_value()) {
+        sql += "AND workspace = ? ";
+    }
+    if (request.before.has_value()) {
+        sql +=
+            "AND (updated_at_ms < ? OR (updated_at_ms = ? AND id < ?)) ";
+    }
+    sql += "ORDER BY updated_at_ms DESC, id DESC LIMIT ?";
+
+    Statement query{impl_->database, sql};
+    int bind_index = 1;
+    if (request.workspace.has_value()) {
+        query.bind(bind_index++, *request.workspace);
+    }
+    if (request.before.has_value()) {
+        query.bind(bind_index++, request.before->updated_at_ms);
+        query.bind(bind_index++, request.before->updated_at_ms);
+        query.bind(bind_index++, request.before->id);
+    }
+    const bool can_detect_more = request.limit < static_cast<std::size_t>(
+        std::numeric_limits<std::int64_t>::max());
+    const std::size_t fetch_limit = request.limit + (can_detect_more ? 1 : 0);
+    query.bind(bind_index, static_cast<std::int64_t>(fetch_limit));
+
+    SessionListPage page;
     while (query.step() == SQLITE_ROW) {
-        sessions.push_back({
+        page.sessions.push_back({
             .id = query.text(0),
             .title = query.text(1),
             .workspace = query.text(2),
@@ -501,7 +533,15 @@ std::vector<SessionSummary> SqliteSessionStore::list_sessions(
             .updated_at_ms = query.integer(4),
         });
     }
-    return sessions;
+    if (page.sessions.size() > request.limit) {
+        page.sessions.resize(request.limit);
+        const SessionSummary& last = page.sessions.back();
+        page.next_cursor = SessionListCursor{
+            .updated_at_ms = last.updated_at_ms,
+            .id = last.id,
+        };
+    }
+    return page;
 }
 
 void SqliteSessionStore::reset_session(

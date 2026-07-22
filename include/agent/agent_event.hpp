@@ -1,9 +1,11 @@
 #pragma once
 
 #include "cancellation.hpp"
+#include "agent/process_result.hpp"
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace swe_agent::agent {
@@ -36,6 +38,8 @@ struct AgentEvent {
     std::string command;
     // 仅命令拒绝事件使用；其它事件保持为空。
     std::string rule_id;
+    /** @brief 仅 CommandFinished 使用；true 表示子进程成功退出。 */
+    std::optional<bool> command_succeeded;
 };
 
 // 回调运行在调用 agent::run() 的线程上；TUI 中即 Worker 线程。
@@ -62,6 +66,9 @@ struct CommandDecision {
 
 using CommandAuthorizer = std::function<CommandDecision (const CommandRequest&)>;
 
+/** @brief Agent Loop 使用的可注入 Shell 执行器。 */
+using ShellExecutor = std::function<ProcessResult(const std::string&)>;
+
 struct AgentRunOptions {
     // 实时事件只用于展示过程；任务终态以 AgentRunResult 为准。
     AgentEventHandler on_event;
@@ -69,5 +76,7 @@ struct AgentRunOptions {
     StopToken stop_token;
     // 命令授权器。
     CommandAuthorizer authorizer;
+    /** @brief 可选 Shell 执行器；未提供时使用当前进程工作目录。 */
+    ShellExecutor shell_executor;
 };
 }  // namespace swe_agent::agent

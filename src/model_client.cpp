@@ -17,6 +17,12 @@ ModelResponse ModelClient::query(const MSG& message) {
     return provider_->query(message);
 }
 
+ModelResponse ModelClient::query(
+    const MSG& message,
+    agent::StopToken stop_token) {
+    return provider_->query(message, stop_token);
+}
+
 /**
  * @brief 符合 Provider 契约的 OpenAI 兼容 API 实现
  *
@@ -28,6 +34,12 @@ ModelResponse ModelClient::query(const MSG& message) {
  *       请求 JSON 形状由 build_request_body / role_to_string 单独测。
  */
 ModelResponse OpenaiCompatible::query(const MSG& messages) {
+    return query(messages, {});
+}
+
+ModelResponse OpenaiCompatible::query(
+    const MSG& messages,
+    agent::StopToken stop_token) {
     if (messages.empty()) {
         return ModelResponse{"Messages are empty"};
     }
@@ -41,7 +53,7 @@ ModelResponse OpenaiCompatible::query(const MSG& messages) {
 
     http::HttpClient http_client;
     const http::HttpResponse response =
-        http_client.post(config_.base_url, headers, body.dump());
+        http_client.post(config_.base_url, headers, body.dump(), stop_token);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error{
