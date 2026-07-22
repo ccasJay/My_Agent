@@ -27,6 +27,7 @@ add_executable(swe_agent_tests
     test_session_store.cpp
     test_session_manager.cpp
     test_slash_registry.cpp
+    test_slash_suggest.cpp
     test_cli.cpp
     test_log_block.cpp
     test_log_viewport.cpp
