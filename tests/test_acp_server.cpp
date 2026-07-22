@@ -249,7 +249,9 @@ public:
     ProtocolHarness(
         const std::filesystem::path& workspace,
         FakeProvider& provider,
-        std::size_t active_session_limit = 64)
+        std::size_t active_session_limit = 64,
+        std::chrono::milliseconds permission_timeout =
+            std::chrono::minutes{5})
         : workspace_(workspace.string()),
           store_(workspace / "agent.db"),
           connection_(input_, output_),
@@ -264,6 +266,7 @@ public:
                   },
                   .session_store = store_,
                   .model_name = "fake-model",
+                  .permission_timeout = permission_timeout,
                   .active_session_limit = active_session_limit,
               }) {}
 
@@ -518,6 +521,100 @@ TEST_CASE("ACP server resolves command permission through the client", "[acp][pe
         return is_response(message, 3);
     });
     REQUIRE(completed["result"]["stopReason"] == "end_turn");
+    harness.stop();
+}
+
+TEST_CASE("ACP server finalizes pending tool when cancelled", "[acp][permission]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    provider.set_responses({"Review\nRUN: sh -c 'echo pending'\n"});
+    ProtocolHarness harness{workspace.path(), provider};
+    harness.start();
+    const std::string session_id = initialize_and_create(harness);
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/prompt"},
+        {"params", {
+            {"sessionId", session_id},
+            {"prompt", Json::array({{{"type", "text"}, {"text", "cancel"}}})},
+        }},
+    });
+    const Json permission = harness.wait_for([](const Json& message) {
+        return is_method(message, "session/request_permission");
+    });
+    const std::string tool_id =
+        permission["params"]["toolCall"]["toolCallId"].get<std::string>();
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"method", "session/cancel"},
+        {"params", {{"sessionId", session_id}}},
+    });
+
+    (void)harness.wait_for([&tool_id](const Json& message) {
+        return is_method(message, "session/update") &&
+            message["params"]["update"].value("toolCallId", "") == tool_id &&
+            message["params"]["update"].value("status", "") == "failed";
+    });
+    const Json cancelled = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    REQUIRE(cancelled["result"]["stopReason"] == "cancelled");
+
+    const auto messages = harness.messages();
+    const auto failed = std::find_if(
+        messages.begin(),
+        messages.end(),
+        [&tool_id](const Json& message) {
+            return is_method(message, "session/update") &&
+                message["params"]["update"].value("toolCallId", "") == tool_id &&
+                message["params"]["update"].value("status", "") == "failed";
+        });
+    const auto response = std::find_if(
+        messages.begin(),
+        messages.end(),
+        [](const Json& message) { return is_response(message, 3); });
+    REQUIRE(failed != messages.end());
+    REQUIRE(response != messages.end());
+    REQUIRE(failed < response);
+    harness.stop();
+}
+
+TEST_CASE("ACP server times out unanswered permission", "[acp][permission]") {
+    TempWorkspace workspace;
+    FakeProvider provider;
+    provider.set_responses({"Review\nRUN: sh -c 'echo timeout'\n"});
+    ProtocolHarness harness{
+        workspace.path(),
+        provider,
+        64,
+        std::chrono::milliseconds{100}};
+    harness.start();
+    const std::string session_id = initialize_and_create(harness);
+    harness.send({
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/prompt"},
+        {"params", {
+            {"sessionId", session_id},
+            {"prompt", Json::array({{{"type", "text"}, {"text", "timeout"}}})},
+        }},
+    });
+    const Json permission = harness.wait_for([](const Json& message) {
+        return is_method(message, "session/request_permission");
+    });
+    const std::string tool_id =
+        permission["params"]["toolCall"]["toolCallId"].get<std::string>();
+
+    (void)harness.wait_for([&tool_id](const Json& message) {
+        return is_method(message, "session/update") &&
+            message["params"]["update"].value("toolCallId", "") == tool_id &&
+            message["params"]["update"].value("status", "") == "failed";
+    });
+    const Json timed_out = harness.wait_for([](const Json& message) {
+        return is_response(message, 3);
+    });
+    REQUIRE(timed_out["result"]["stopReason"] == "cancelled");
     harness.stop();
 }
 

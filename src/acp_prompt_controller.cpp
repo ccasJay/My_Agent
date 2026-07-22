@@ -72,6 +72,17 @@ std::string stop_reason(agent::AgentRunStatus status) {
 }  // namespace
 
 struct AcpPromptController::PromptState {
+    enum class ToolStatus {
+        Pending,
+        InProgress,
+        Terminal,
+    };
+
+    struct ToolState {
+        std::string id;
+        ToolStatus status{ToolStatus::Pending};
+    };
+
     Json request_id;
     std::string session_id;
     agent::StopSource stop_source;
@@ -82,11 +93,14 @@ struct AcpPromptController::PromptState {
     std::optional<Json> permission_request_id;
     std::optional<Json> permission_response;
 
-    std::unordered_map<std::size_t, std::string> tool_calls;
+    std::unordered_map<std::size_t, ToolState> tool_calls;
 };
 
-AcpPromptController::AcpPromptController(JsonRpcConnection& connection)
-    : connection_(connection) {}
+AcpPromptController::AcpPromptController(
+    JsonRpcConnection& connection,
+    std::chrono::milliseconds permission_timeout)
+    : connection_(connection),
+      permission_timeout_(permission_timeout) {}
 
 AcpPromptController::~AcpPromptController() {
     stop_and_join();
@@ -213,9 +227,10 @@ void AcpPromptController::run_prompt(
     try {
         agent::AgentRunOptions options;
         options.stop_token = state->stop_source.token();
-        options.shell_executor = [workspace = active_session.workspace](
+        options.shell_executor = [workspace = active_session.workspace,
+                                  stop_token = options.stop_token](
                                      const std::string& command) {
-            return agent::run_shell(command, workspace);
+            return agent::run_shell(command, workspace, stop_token);
         };
         options.authorizer = [this, state, workspace = active_session.workspace](
                                  const agent::CommandRequest& request) {
@@ -227,12 +242,18 @@ void AcpPromptController::run_prompt(
 
         const agent::AgentRunResult result =
             active_session.session->submit(std::move(prompt), options);
+        if (result.status == agent::AgentRunStatus::Stopped) {
+            finalize_unfinished_tools(state, "Tool call cancelled.");
+        } else {
+            finalize_unfinished_tools(state, "Tool call did not finish.");
+        }
         connection_.send_result(state->request_id, {
             {"stopReason", stop_reason(result.status)},
         });
     } catch (const std::exception& error) {
         std::cerr << "ACP prompt failed: " << error.what() << '\n';
         try {
+            finalize_unfinished_tools(state, "Tool call failed.");
             connection_.send_error(
                 state->request_id,
                 kInternalError,
@@ -251,7 +272,10 @@ agent::CommandDecision AcpPromptController::authorize_command(
     const std::string& workspace) {
     const std::string tool_call_id = "tool-" +
         std::to_string(next_tool_call_id_.fetch_add(1));
-    state->tool_calls[request.step] = tool_call_id;
+    state->tool_calls[request.step] = {
+        .id = tool_call_id,
+        .status = PromptState::ToolStatus::Pending,
+    };
     connection_.send_notification("session/update", {
         {"sessionId", state->session_id},
         {"update", {
@@ -272,7 +296,7 @@ agent::CommandDecision AcpPromptController::authorize_command(
         request,
         policy_context,
         false,
-        [this, state, &tool_call_id](
+        [this, state, tool_call_id](
             const agent::CommandRequest& review_request) {
             return request_permission(
                 state,
@@ -317,10 +341,21 @@ agent::CommandDecision AcpPromptController::request_permission(
     Json response;
     {
         std::unique_lock lock{state->permission_mutex};
-        state->permission_cv.wait(lock, [&] {
-            return state->permission_response.has_value() ||
-                state->stop_source.token().stop_requested();
-        });
+        const bool resolved = state->permission_cv.wait_for(
+            lock,
+            permission_timeout_,
+            [&] {
+                return state->permission_response.has_value() ||
+                    state->stop_source.token().stop_requested();
+            });
+        if (!resolved) {
+            state->permission_request_id.reset();
+            state->permission_response.reset();
+            return {
+                .action = agent::CommandAction::Stop,
+                .reason = "Permission request timed out.",
+            };
+        }
         if (state->stop_source.token().stop_requested()) {
             state->permission_request_id.reset();
             state->permission_response.reset();
@@ -415,10 +450,11 @@ void AcpPromptController::handle_event(
             {"sessionId", state->session_id},
             {"update", {
                 {"sessionUpdate", "tool_call_update"},
-                {"toolCallId", tool->second},
+                {"toolCallId", tool->second.id},
                 {"status", "in_progress"},
             }},
         });
+        tool->second.status = PromptState::ToolStatus::InProgress;
     } else if (event.type == AgentEventType::CommandFinished ||
                event.type == AgentEventType::CommandRejected) {
         const bool succeeded =
@@ -426,7 +462,7 @@ void AcpPromptController::handle_event(
             event.command_succeeded.value_or(false);
         Json update{
             {"sessionUpdate", "tool_call_update"},
-            {"toolCallId", tool->second},
+            {"toolCallId", tool->second.id},
             {"status", succeeded ? "completed" : "failed"},
         };
         if (!event.content.empty()) {
@@ -444,6 +480,36 @@ void AcpPromptController::handle_event(
             {"sessionId", state->session_id},
             {"update", std::move(update)},
         });
+        tool->second.status = PromptState::ToolStatus::Terminal;
+    }
+}
+
+void AcpPromptController::finalize_unfinished_tools(
+    const std::shared_ptr<PromptState>& state,
+    std::string_view message) {
+    for (auto& [step, tool] : state->tool_calls) {
+        (void)step;
+        if (tool.status == PromptState::ToolStatus::Terminal) {
+            continue;
+        }
+        connection_.send_notification("session/update", {
+            {"sessionId", state->session_id},
+            {"update", {
+                {"sessionUpdate", "tool_call_update"},
+                {"toolCallId", tool.id},
+                {"status", "failed"},
+                {"content", Json::array({
+                    {
+                        {"type", "content"},
+                        {"content", {
+                            {"type", "text"},
+                            {"text", message},
+                        }},
+                    },
+                })},
+            }},
+        });
+        tool.status = PromptState::ToolStatus::Terminal;
     }
 }
 

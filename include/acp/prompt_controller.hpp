@@ -5,6 +5,7 @@
 #include "agent/agent_event.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -24,7 +25,10 @@ namespace swe_agent::acp {
 class AcpPromptController {
 public:
     /** @brief 构造绑定到指定 JSON-RPC 连接的 Prompt 控制器。 */
-    explicit AcpPromptController(JsonRpcConnection& connection);
+    explicit AcpPromptController(
+        JsonRpcConnection& connection,
+        std::chrono::milliseconds permission_timeout =
+            std::chrono::minutes{5});
 
     /** @brief 请求停止并回收仍在运行的 Worker。 */
     ~AcpPromptController();
@@ -74,9 +78,13 @@ private:
     void handle_event(
         const std::shared_ptr<PromptState>& state,
         const agent::AgentEvent& event);
+    void finalize_unfinished_tools(
+        const std::shared_ptr<PromptState>& state,
+        std::string_view message);
     void reap_finished();
 
     JsonRpcConnection& connection_;
+    std::chrono::milliseconds permission_timeout_;
     mutable std::mutex mutex_;
     std::shared_ptr<PromptState> active_;
     std::thread worker_;

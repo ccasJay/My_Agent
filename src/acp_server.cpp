@@ -204,7 +204,7 @@ AcpServer::AcpServer(
           context_.session_store,
           context_.model_name,
           context_.active_session_limit),
-      prompts_(connection_) {}
+      prompts_(connection_, context_.permission_timeout) {}
 
 int AcpServer::run() {
     while (true) {
