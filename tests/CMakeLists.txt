@@ -13,6 +13,7 @@ endif()
 
 add_executable(swe_agent_tests
     ../src/cli.cpp
+    ../src/tui_view.cpp
     test_shell.cpp
     test_command_policy.cpp
     test_command_authorization.cpp
@@ -31,6 +32,7 @@ add_executable(swe_agent_tests
     test_run_status.cpp
     test_tui_session.cpp
     test_tui_state.cpp
+    test_tui_view.cpp
 )
 
 target_link_libraries(swe_agent_tests
@@ -39,6 +41,7 @@ target_link_libraries(swe_agent_tests
         swe_agent_tui_support
         Catch2::Catch2WithMain
         CLI11::CLI11
+        ftxui::ftxui
 )
 
 target_compile_options(swe_agent_tests PRIVATE

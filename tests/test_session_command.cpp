@@ -28,13 +28,19 @@ TEST_CASE("session command parser reports malformed commands", "[tui][session_co
 
     const auto missing_id = swe_agent::tui::parse_session_command("/resume");
     REQUIRE(missing_id.kind == SessionCommandKind::Invalid);
-    REQUIRE_FALSE(missing_id.error.empty());
+    REQUIRE(missing_id.error == "Usage: /resume <session-id-prefix>");
+
+    const auto invalid_id =
+        swe_agent::tui::parse_session_command("/resume abc def");
+    REQUIRE(invalid_id.kind == SessionCommandKind::Invalid);
+    REQUIRE(invalid_id.error == "Session id prefix cannot contain whitespace");
 
     const auto unknown = swe_agent::tui::parse_session_command("/unknown");
     REQUIRE(unknown.kind == SessionCommandKind::Invalid);
-    REQUIRE_FALSE(unknown.error.empty());
+    REQUIRE(unknown.error == "Unknown command: /unknown");
 
     const auto prefixed =
         swe_agent::tui::parse_session_command("/resumeabcdef12");
     REQUIRE(prefixed.kind == SessionCommandKind::Invalid);
+    REQUIRE(prefixed.error == "Unknown command: /resumeabcdef12");
 }
