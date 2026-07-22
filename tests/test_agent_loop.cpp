@@ -34,7 +34,23 @@ struct FakeProvider {
     }
 };
 
+struct CancellableProvider {
+    swe_agent::agent::StopSource& stop_source;
+
+    swe_agent::model::ModelResponse query(const swe_agent::model::MSG&) {
+        return {"unused"};
+    }
+
+    swe_agent::model::ModelResponse query(
+        const swe_agent::model::MSG&,
+        swe_agent::agent::StopToken) {
+        stop_source.request_stop();
+        throw swe_agent::agent::OperationCancelled{};
+    }
+};
+
 static_assert(swe_agent::model::Provider<FakeProvider>);
+static_assert(swe_agent::model::Provider<CancellableProvider>);
 
 swe_agent::config::AgentConfig make_cfg(
     std::size_t step_limit = 10,
@@ -72,6 +88,24 @@ bool has_command_event(
 }
 
 }  // namespace
+
+TEST_CASE("agent_loop maps provider cancellation to stopped", "[agent_loop]") {
+    swe_agent::agent::StopSource stop_source;
+    CancellableProvider provider{stop_source};
+    std::vector<swe_agent::agent::AgentEvent> events;
+    swe_agent::agent::AgentRunOptions options{
+        .on_event = [&events](const swe_agent::agent::AgentEvent& event) {
+            events.push_back(event);
+        },
+        .stop_token = stop_source.token(),
+    };
+
+    const auto result = swe_agent::agent::run(provider, make_cfg(), options);
+
+    REQUIRE(result.status == swe_agent::agent::AgentRunStatus::Stopped);
+    REQUIRE(events.size() == 1);
+    REQUIRE(events.front().type == swe_agent::agent::AgentEventType::Stopped);
+}
 
 TEST_CASE("agent_loop respects step_limit after one shell observation", "[agent_loop]") {
     FakeProvider provider;

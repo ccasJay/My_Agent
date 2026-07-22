@@ -21,6 +21,7 @@ add_executable(swe_agent_tests
     test_command_authorization.cpp
     test_command_review.cpp
     test_config.cpp
+    test_http.cpp
     test_agent_loop.cpp
     test_agent_session.cpp
     test_session_store.cpp

@@ -107,7 +107,13 @@ ProcessResult execute_shell(
     if (options.shell_executor) {
         return options.shell_executor(command);
     }
-    return run_shell(command);
+    std::error_code error;
+    const std::filesystem::path working_directory =
+        std::filesystem::current_path(error);
+    if (error) {
+        return run_shell(command);
+    }
+    return run_shell(command, working_directory, options.stop_token);
 }
 
 bool should_stop(const AgentRunOptions& options) {
@@ -186,7 +192,13 @@ AgentRunResult run(
             break;
         }
 
-        last = provider.query(history);
+        try {
+            last = model::query_provider(provider, history, options.stop_token);
+        } catch (const OperationCancelled&) {
+            emit_event(options, AgentEventType::Stopped, step);
+            status = AgentRunStatus::Stopped;
+            break;
+        }
         if (should_stop(options)) {
             emit_event(options, AgentEventType::Stopped, step);
             status = AgentRunStatus::Stopped;

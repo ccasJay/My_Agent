@@ -2,9 +2,16 @@
 
 #include <atomic>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace swe_agent::agent {
+
+/** @brief 阻塞操作因 StopToken 被请求而提前终止。 */
+class OperationCancelled : public std::runtime_error {
+public:
+    OperationCancelled() : std::runtime_error{"Operation cancelled"} {}
+};
 
 class StopSource;
 

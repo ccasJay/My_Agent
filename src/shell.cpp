@@ -2,8 +2,12 @@
 
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
@@ -23,6 +27,18 @@ std::string trim_right_newlines(std::string s) {
         s.pop_back();
     }
     return s;
+}
+
+bool set_close_on_exec(int descriptor) {
+    const int flags = ::fcntl(descriptor, F_GETFD);
+    return flags >= 0 &&
+        ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+void signal_process_group(pid_t child, int signal_number) {
+    if (::kill(-child, signal_number) != 0 && errno == ESRCH) {
+        (void)::kill(child, signal_number);
+    }
 }
 
 }  // namespace
@@ -87,11 +103,24 @@ ProcessResult run_shell(const std::string& command) {
 ProcessResult run_shell(
     const std::string& command,
     const std::filesystem::path& working_directory) {
+    return run_shell(command, working_directory, {});
+}
+
+ProcessResult run_shell(
+    const std::string& command,
+    const std::filesystem::path& working_directory,
+    StopToken stop_token) {
     ProcessResult result;
 
     if (command.empty()) {
         result.termination = TerminationKind::ExecutionError;
         result.error_message = "[shell] empty command";
+        return result;
+    }
+
+    if (stop_token.stop_requested()) {
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] cancelled before execution";
         return result;
     }
 
@@ -102,10 +131,36 @@ ProcessResult run_shell(
             std::string{std::strerror(errno)};
         return result;
     }
+    if (!set_close_on_exec(pipe_fds[0]) ||
+        !set_close_on_exec(pipe_fds[1])) {
+        const int saved_errno = errno;
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] fcntl failed: " +
+            std::string{std::strerror(saved_errno)};
+        return result;
+    }
+
+    const int null_input = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (null_input < 0) {
+        const int saved_errno = errno;
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        result.termination = TerminationKind::ExecutionError;
+        result.error_message = "[shell] open /dev/null failed: " +
+            std::string{std::strerror(saved_errno)};
+        return result;
+    }
+    long maximum_descriptor = ::sysconf(_SC_OPEN_MAX);
+    if (maximum_descriptor < 0) {
+        maximum_descriptor = 1024;
+    }
 
     const pid_t child = ::fork();
     if (child < 0) {
         const int saved_errno = errno;
+        ::close(null_input);
         ::close(pipe_fds[0]);
         ::close(pipe_fds[1]);
         result.termination = TerminationKind::ExecutionError;
@@ -115,12 +170,18 @@ ProcessResult run_shell(
     }
 
     if (child == 0) {
+        (void)::setpgid(0, 0);
         ::close(pipe_fds[0]);
-        if (::dup2(pipe_fds[1], STDOUT_FILENO) < 0 ||
+        if (::dup2(null_input, STDIN_FILENO) < 0 ||
+            ::dup2(pipe_fds[1], STDOUT_FILENO) < 0 ||
             ::dup2(pipe_fds[1], STDERR_FILENO) < 0) {
             ::_exit(127);
         }
-        ::close(pipe_fds[1]);
+        for (int descriptor = STDERR_FILENO + 1;
+             descriptor < maximum_descriptor;
+             ++descriptor) {
+            ::close(descriptor);
+        }
 
         if (::chdir(working_directory.c_str()) != 0) {
             constexpr char kMessage[] = "[shell] chdir failed\n";
@@ -133,10 +194,54 @@ ProcessResult run_shell(
         ::_exit(127);
     }
 
+    ::close(null_input);
     ::close(pipe_fds[1]);
+    if (::setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
+        result.error_message = "[shell] setpgid failed: " +
+            std::string{std::strerror(errno)};
+    }
     std::array<char, 512> buf{};
     constexpr std::size_t kMaxBytes = 16 * 1024;
+    constexpr auto kPollInterval = std::chrono::milliseconds{50};
+    constexpr auto kTerminationGrace = std::chrono::seconds{1};
+    bool termination_requested = false;
+    bool force_killed = false;
+    std::chrono::steady_clock::time_point force_kill_at{};
     while (true) {
+        if (stop_token.stop_requested() && !termination_requested) {
+            signal_process_group(child, SIGTERM);
+            termination_requested = true;
+            force_kill_at = std::chrono::steady_clock::now() +
+                kTerminationGrace;
+        }
+        if (termination_requested && !force_killed &&
+            std::chrono::steady_clock::now() >= force_kill_at) {
+            signal_process_group(child, SIGKILL);
+            force_killed = true;
+        }
+
+        pollfd descriptor{
+            .fd = pipe_fds[0],
+            .events = POLLIN | POLLHUP,
+            .revents = 0,
+        };
+        const int poll_result = ::poll(
+            &descriptor,
+            1,
+            static_cast<int>(kPollInterval.count()));
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            result.error_message = "[shell] poll failed: " +
+                std::string{std::strerror(errno)};
+            signal_process_group(child, SIGKILL);
+            break;
+        }
+        if (poll_result == 0) {
+            continue;
+        }
+
         const ssize_t count = ::read(pipe_fds[0], buf.data(), buf.size());
         if (count == 0) {
             break;
@@ -147,6 +252,7 @@ ProcessResult run_shell(
             }
             result.error_message = "[shell] read failed: " +
                 std::string{std::strerror(errno)};
+            signal_process_group(child, SIGKILL);
             break;
         }
         if (result.truncated) {

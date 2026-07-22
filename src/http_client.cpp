@@ -6,6 +6,10 @@
 
 namespace {
 
+struct ProgressContext {
+    swe_agent::agent::StopToken stop_token;
+};
+
 /**
  * @brief libcurl 回调函数，用于接收响应数据
  * 
@@ -32,6 +36,16 @@ std::size_t WriteCallback (
     }
 }
 
+int ProgressCallback(
+    void* clientp,
+    curl_off_t,
+    curl_off_t,
+    curl_off_t,
+    curl_off_t) noexcept {
+    const auto* context = static_cast<const ProgressContext*>(clientp);
+    return context != nullptr && context->stop_token.stop_requested() ? 1 : 0;
+}
+
 }  // namespace
 
 namespace swe_agent::http {
@@ -48,6 +62,15 @@ HttpResponse HttpClient::post(
     const std::string& url,
     const std::vector<std::string>& headers,
     const std::string& body
+) const {
+    return post(url, headers, body, {});
+}
+
+HttpResponse HttpClient::post(
+    const std::string& url,
+    const std::vector<std::string>& headers,
+    const std::string& body,
+    agent::StopToken stop_token
 ) const {
     /* 初始化 CURL 对象 */
     CURL* curl = curl_easy_init();
@@ -72,6 +95,7 @@ HttpResponse HttpClient::post(
     }
 
     std::string response;
+    const ProgressContext progress_context{.stop_token = stop_token};
 
     /* 设置请求 URL */
     curl_easy_setopt(
@@ -110,6 +134,9 @@ HttpResponse HttpClient::post(
         CURLOPT_WRITEDATA,
         &response
     );
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ProgressCallback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress_context);
 
     /* 超时：连接阶段与整次请求上限，避免一直挂起 */
     constexpr long kConnectTimeoutSec = 10;
@@ -125,6 +152,10 @@ HttpResponse HttpClient::post(
         std::string error = curl_easy_strerror(result);
         curl_slist_free_all(header_list);
         curl_easy_cleanup(curl);
+        if (result == CURLE_ABORTED_BY_CALLBACK &&
+            stop_token.stop_requested()) {
+            throw agent::OperationCancelled{};
+        }
         throw std::runtime_error{"curl request failed: " + error};
     }
 

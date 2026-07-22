@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/cancellation.hpp"
 #include "agent/process_result.hpp"
 
 #include <filesystem>
@@ -29,6 +30,16 @@ ProcessResult run_shell(const std::string& command);
 ProcessResult run_shell(
     const std::string& command,
     const std::filesystem::path& working_directory);
+
+/**
+ * @brief 在指定工作目录执行可取消的 Shell 命令。
+ *
+ * 取消时终止命令所属进程组；子进程标准输入固定连接到 /dev/null。
+ */
+ProcessResult run_shell(
+    const std::string& command,
+    const std::filesystem::path& working_directory,
+    StopToken stop_token);
 
 // 将结构化执行结果转换成给 Agent/人阅读的 observation。
 std::string format_process_result(

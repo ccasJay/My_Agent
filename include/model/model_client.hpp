@@ -10,6 +10,9 @@ public:
     explicit OpenaiCompatible(const ModelConfig& config) : config_(config) {}
 
     ModelResponse query(const MSG& messages) override;
+    ModelResponse query(
+        const MSG& messages,
+        agent::StopToken stop_token) override;
 
 private:
     ModelConfig config_;
