@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "agent/shell.hpp"
 
+#include <chrono>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -117,5 +119,23 @@ TEST_CASE("run_shell executes commands and formats output", "[shell]") {
         REQUIRE(result.success());
         REQUIRE(result.truncated);
         REQUIRE(result.output.size() == 16 * 1024);
+    }
+
+    SECTION("explicit working directory is isolated to the child") {
+        const auto original = std::filesystem::current_path();
+        const auto directory = std::filesystem::temp_directory_path() /
+            ("swe-agent-shell-" + std::to_string(
+                std::chrono::steady_clock::now()
+                    .time_since_epoch()
+                    .count()));
+        std::filesystem::create_directories(directory);
+
+        const auto result = run_shell("pwd", directory);
+
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(directory, cleanup_error);
+        REQUIRE(result.success());
+        REQUIRE(result.output.find(directory.string()) != std::string::npos);
+        REQUIRE(std::filesystem::current_path() == original);
     }
 }

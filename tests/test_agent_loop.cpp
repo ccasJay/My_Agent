@@ -256,8 +256,10 @@ TEST_CASE("agent_loop emits ordered events for command and completion", "[agent_
     REQUIRE(events[0].type == AgentEventType::Assistant);
     REQUIRE(events[1].type == AgentEventType::CommandStarted);
     REQUIRE(events[2].type == AgentEventType::CommandFinished);
+    REQUIRE(events[2].command_succeeded == true);
     REQUIRE(events[3].type == AgentEventType::CommandStarted);
     REQUIRE(events[4].type == AgentEventType::CommandFinished);
+    REQUIRE(events[4].command_succeeded == true);
     REQUIRE(events[5].type == AgentEventType::Completed);
     REQUIRE(events[0].step == 0);
     REQUIRE(events[3].step == 1);

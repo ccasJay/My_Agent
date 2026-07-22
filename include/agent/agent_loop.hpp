@@ -10,6 +10,7 @@
 
 #include <cctype>
 #include <cstddef>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -86,7 +87,8 @@ void emit_event(
     std::size_t step,
     std::string content = {},
     std::string command = {},
-    std::string rule_id = {}) {
+    std::string rule_id = {},
+    std::optional<bool> command_succeeded = std::nullopt) {
     if (options.on_event) {
         options.on_event(AgentEvent{
             .type = type,
@@ -94,8 +96,18 @@ void emit_event(
             .content = std::move(content),
             .command = std::move(command),
             .rule_id = std::move(rule_id),
+            .command_succeeded = command_succeeded,
         });
     }
+}
+
+ProcessResult execute_shell(
+    const AgentRunOptions& options,
+    const std::string& command) {
+    if (options.shell_executor) {
+        return options.shell_executor(command);
+    }
+    return run_shell(command);
 }
 
 bool should_stop(const AgentRunOptions& options) {
@@ -241,14 +253,16 @@ AgentRunResult run(
                 step,
                 {},
                 *cmd);
-            const ProcessResult process_result = run_shell(*cmd);
+            const ProcessResult process_result = execute_shell(options, *cmd);
             const std::string observation = format_process_result(*cmd, process_result);
             emit_event(
                 options,
                 AgentEventType::CommandFinished,
                 step,
                 observation,
-                *cmd);
+                *cmd,
+                {},
+                process_result.success());
             // 停止可能在 Shell 阻塞期间到达；此时 Stopped 必须优先于 Completed。
             if (should_stop(options)) {
                 emit_event(options, AgentEventType::Stopped, step);
@@ -307,14 +321,16 @@ AgentRunResult run(
             step,
             {},
             *cmd);
-        const ProcessResult process_result = run_shell(*cmd);
+        const ProcessResult process_result = execute_shell(options, *cmd);
         const std::string observation = format_process_result(*cmd, process_result);
         emit_event(
             options,
             AgentEventType::CommandFinished,
             step,
             observation,
-            *cmd);
+            *cmd,
+            {},
+            process_result.success());
 
         // 前缀方便模型/人阅读；Role::User 兼容未接 tool_calls 的 API
         append_history(

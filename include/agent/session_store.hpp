@@ -78,6 +78,25 @@ struct SessionSummary {
     std::int64_t updated_at_ms{0};
 };
 
+/** @brief Session 列表的稳定键集游标。 */
+struct SessionListCursor {
+    std::int64_t updated_at_ms{0};
+    SessionId id;
+};
+
+/** @brief Session 分页查询条件。 */
+struct SessionListQuery {
+    std::optional<std::string> workspace;
+    std::optional<SessionListCursor> before;
+    std::size_t limit{20};
+};
+
+/** @brief Session 分页查询结果。 */
+struct SessionListPage {
+    std::vector<SessionSummary> sessions;
+    std::optional<SessionListCursor> next_cursor;
+};
+
 /**
  * @brief 创建新会话时的种子字段
  */
@@ -136,9 +155,20 @@ public:
      * @brief 列出 workspace 内会话摘要，按更新时间倒序
      * @param limit 最大条数
      */
-    [[nodiscard]] virtual std::vector<SessionSummary> list_sessions(
+    [[nodiscard]] virtual SessionListPage list_sessions_page(
+        const SessionListQuery& query) = 0;
+
+    /**
+     * @brief 兼容现有 CLI/TUI 的按工作区列表接口。
+     */
+    [[nodiscard]] std::vector<SessionSummary> list_sessions(
         std::string_view workspace,
-        std::size_t limit) = 0;
+        std::size_t limit) {
+        return list_sessions_page({
+            .workspace = std::string{workspace},
+            .limit = limit,
+        }).sessions;
+    }
 
     /**
      * @brief 清空消息并重置为新的 System 种子（保留 session id）
