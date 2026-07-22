@@ -58,6 +58,15 @@ public:
      */
     [[nodiscard]] Json send_request(std::string_view method, Json params);
 
+    /** @brief 预留一个反向请求 ID，供注册等待状态后再发送。 */
+    [[nodiscard]] Json next_request_id();
+
+    /** @brief 使用已预留 ID 发送反向请求。 */
+    void send_request(
+        const Json& id,
+        std::string_view method,
+        Json params);
+
 private:
     void write(Json message);
 

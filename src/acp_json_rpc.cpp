@@ -66,15 +66,25 @@ void JsonRpcConnection::send_notification(
 Json JsonRpcConnection::send_request(
     std::string_view method,
     Json params) {
-    const Json id = "agent-" +
-        std::to_string(next_request_id_.fetch_add(1));
+    const Json id = next_request_id();
+    send_request(id, method, std::move(params));
+    return id;
+}
+
+Json JsonRpcConnection::next_request_id() {
+    return "agent-" + std::to_string(next_request_id_.fetch_add(1));
+}
+
+void JsonRpcConnection::send_request(
+    const Json& id,
+    std::string_view method,
+    Json params) {
     write({
         {"jsonrpc", "2.0"},
         {"id", id},
         {"method", method},
         {"params", std::move(params)},
     });
-    return id;
 }
 
 void JsonRpcConnection::write(Json message) {

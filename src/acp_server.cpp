@@ -20,6 +20,7 @@ constexpr int kInvalidRequest = -32600;
 constexpr int kMethodNotFound = -32601;
 constexpr int kInvalidParams = -32602;
 constexpr int kInternalError = -32603;
+constexpr int kServerBusy = -32000;
 constexpr int kServerNotInitialized = -32002;
 constexpr std::int64_t kProtocolVersion = 1;
 constexpr std::size_t kSessionPageSize = 20;
@@ -133,6 +134,44 @@ std::string rfc3339_timestamp(std::int64_t milliseconds) {
     return timestamp;
 }
 
+std::optional<std::string> flatten_prompt(const Json& blocks) {
+    if (!blocks.is_array() || blocks.empty()) {
+        return std::nullopt;
+    }
+    std::string prompt;
+    for (const auto& block : blocks) {
+        if (!block.is_object() || !block.contains("type") ||
+            !block["type"].is_string()) {
+            return std::nullopt;
+        }
+        std::string content;
+        const std::string type = block["type"].get<std::string>();
+        if (type == "text") {
+            if (!block.contains("text") || !block["text"].is_string()) {
+                return std::nullopt;
+            }
+            content = block["text"].get<std::string>();
+        } else if (type == "resource_link") {
+            if (!block.contains("uri") || !block["uri"].is_string() ||
+                !block.contains("name") || !block["name"].is_string()) {
+                return std::nullopt;
+            }
+            content = "[" + block["name"].get<std::string>() + "](" +
+                block["uri"].get<std::string>() + ")";
+        } else {
+            return std::nullopt;
+        }
+        if (!prompt.empty()) {
+            prompt += "\n\n";
+        }
+        prompt += content;
+    }
+    if (!has_visible_text(prompt)) {
+        return std::nullopt;
+    }
+    return prompt;
+}
+
 }  // namespace
 
 AcpServer::AcpServer(
@@ -144,12 +183,14 @@ AcpServer::AcpServer(
           context_.provider,
           context_.agent_config,
           context_.session_store,
-          context_.model_name) {}
+          context_.model_name),
+      prompts_(connection_) {}
 
 int AcpServer::run() {
     while (true) {
         const JsonRpcReadResult read_result = connection_.read();
         if (read_result.status == JsonRpcReadResult::Status::EndOfStream) {
+            prompts_.stop_and_join();
             return 0;
         }
         if (read_result.status == JsonRpcReadResult::Status::ParseError) {
@@ -251,21 +292,32 @@ void AcpServer::handle_request(
         handle_close_session(params, id);
         return;
     }
+    if (method == "session/prompt") {
+        handle_prompt(params, id);
+        return;
+    }
     connection_.send_error(id, kMethodNotFound, "Method not found");
 }
 
 void AcpServer::handle_notification(
     std::string_view method,
     const Json& params) {
-    (void)params;
     if (!initialized_) {
+        return;
+    }
+    if (method == "session/cancel") {
+        if (params.contains("sessionId") && params["sessionId"].is_string()) {
+            (void)prompts_.cancel(params["sessionId"].get<std::string>());
+        }
         return;
     }
     std::cerr << "Ignoring unsupported ACP notification: " << method << '\n';
 }
 
 void AcpServer::handle_peer_response(const Json& message) {
-    (void)message;
+    if (!prompts_.handle_response(message)) {
+        std::cerr << "Ignoring unmatched ACP response id\n";
+    }
 }
 
 void AcpServer::handle_initialize(const Json& params, const Json& id) {
@@ -371,9 +423,14 @@ void AcpServer::handle_load_session(const Json& params, const Json& id) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
     }
+    const std::string session_id = params["sessionId"].get<std::string>();
+    if (prompts_.is_running(session_id)) {
+        connection_.send_error(id, kServerBusy, "Session prompt is running");
+        return;
+    }
     try {
         const AcpLoadedSession loaded = sessions_.load(
-            params["sessionId"].get<std::string>(),
+            session_id,
             params["cwd"].get<std::string>());
         replay_history(loaded.snapshot);
         connection_.send_result(id, nullptr);
@@ -388,9 +445,14 @@ void AcpServer::handle_resume_session(const Json& params, const Json& id) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
     }
+    const std::string session_id = params["sessionId"].get<std::string>();
+    if (prompts_.is_running(session_id)) {
+        connection_.send_error(id, kServerBusy, "Session prompt is running");
+        return;
+    }
     try {
         (void)sessions_.resume(
-            params["sessionId"].get<std::string>(),
+            session_id,
             params["cwd"].get<std::string>());
         connection_.send_result(id, Json::object());
     } catch (const AcpSessionError& error) {
@@ -403,11 +465,39 @@ void AcpServer::handle_close_session(const Json& params, const Json& id) {
         connection_.send_error(id, kInvalidParams, "Invalid params");
         return;
     }
-    if (!sessions_.close(params["sessionId"].get<std::string>())) {
+    const std::string session_id = params["sessionId"].get<std::string>();
+    (void)prompts_.cancel_and_wait(session_id);
+    if (!sessions_.close(session_id)) {
         connection_.send_error(id, kInvalidParams, "Session is not active");
         return;
     }
     connection_.send_result(id, Json::object());
+}
+
+void AcpServer::handle_prompt(const Json& params, const Json& id) {
+    if (!params.contains("sessionId") || !params["sessionId"].is_string() ||
+        !params.contains("prompt") ||
+        (params.contains("messageId") && !params["messageId"].is_string())) {
+        connection_.send_error(id, kInvalidParams, "Invalid params");
+        return;
+    }
+    const auto prompt = flatten_prompt(params["prompt"]);
+    if (!prompt.has_value()) {
+        connection_.send_error(
+            id,
+            kInvalidParams,
+            "Only non-empty text and resource_link content is supported");
+        return;
+    }
+    const std::string session_id = params["sessionId"].get<std::string>();
+    const auto active = sessions_.find(session_id);
+    if (!active.has_value()) {
+        connection_.send_error(id, kInvalidParams, "Session is not active");
+        return;
+    }
+    if (!prompts_.start(id, *prompt, *active)) {
+        connection_.send_error(id, kServerBusy, "Another prompt is running");
+    }
 }
 
 void AcpServer::replay_history(const agent::SessionSnapshot& snapshot) {

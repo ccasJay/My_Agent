@@ -91,6 +91,7 @@ target_compile_options(swe_agent_tui_support PRIVATE
 
 add_library(swe_agent_acp_support
     src/acp_json_rpc.cpp
+    src/acp_prompt_controller.cpp
     src/acp_server.cpp
     src/acp_session_registry.cpp
 )
