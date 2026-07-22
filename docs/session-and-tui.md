@@ -111,8 +111,9 @@ FTXUI 主线程处理输入和绘制；`TuiSession` Worker 同步执行
 如果调用方的 revision 已不属于当前历史，它会标记 `full_resync` 并返回
 完整日志。刷新通知和动画通知使用原子标志合并，避免事件队列持续堆积。
 
-停止请求设置 `StopToken` 并唤醒可能等待命令审批的 Worker。HTTP 或 Shell
-正在阻塞时不会被强制中断，必须等调用返回后才能完成停止和 join。
+停止请求设置 `StopToken` 并唤醒可能等待命令审批的 Worker。生产 HTTP
+Provider 会中止 libcurl 传输，默认 Shell Executor 会终止独立进程组；只实现
+旧接口的自定义 Provider 仍可能要等调用返回后才能完成停止和 join。
 
 ## 命令审核模式
 

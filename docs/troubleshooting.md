@@ -224,9 +224,10 @@ Session 按规范化 workspace 隔离；`/resume` 前缀至少 8 字符且必须
 
 ### 原因
 
-停止是协作式的。同步 HTTP POST 或 Shell 子进程阻塞期间不会被强制取消；
-Worker 只能在调用返回后的检查点结束。HTTP 当前总超时为 60 秒，Shell
-没有主机侧超时。
+停止通过 StopToken 传播，但底层仍需要调度到检查点。HTTP 由 libcurl 进度
+回调中止传输；Shell 先向独立进程组发送 SIGTERM，1 秒后仍未退出则发送
+SIGKILL。处于内核不可中断状态的进程，或自行脱离进程组的后代，可能继续
+拖延回收。
 
 ### 检查
 
@@ -235,8 +236,9 @@ TUI 会保持 busy 直到旧 Worker 真正返回。
 
 ### 处理
 
-等待当前调用返回。后续任务避免无界阻塞命令；若需要强制终止，只能在
-Agent 外部管理整个进程，当前程序不会主动杀死子进程。
+先短暂等待取消流程完成，并查看 stderr 是否记录终止失败。若进程长期停留，
+检查命令是否创建了脱离进程组的后台服务，或是否处于系统级不可中断 I/O；
+这类进程需要在 Agent 外部单独管理。
 
 ## ACP Client 无法解析输出
 
@@ -265,6 +267,18 @@ load/resume 返回 Invalid params、Session not found 或 cwd mismatch。
 ### 原因与处理
 
 ACP 要求传入存在的绝对 `cwd`，且恢复目录必须等于创建时规范化后的
-workspace；`mcpServers` 还必须是空数组。先用 `session/list` 按 cwd 查询，
-再原样使用返回的 `sessionId`。`session/close` 不会删除历史，关闭后仍可
-重新 load/resume。
+workspace。load 要求 `mcpServers` 明确为空数组；resume 可以省略该字段，
+提供时也必须为空数组。先用 `session/list` 按 cwd 查询，再原样使用返回的
+`sessionId`。`session/close` 不会删除历史，关闭后仍可重新 load/resume。
+
+## ACP 返回 Server busy
+
+整个进程只允许一个 Prompt 运行，单连接默认最多加载 64 个活动 Session。
+等待当前 Prompt 结束，或用 `session/close` 释放不再使用的活动 Session 后
+重试；重复加载已经活动的 Session 不会重复占用名额。
+
+## ACP 权限请求超时
+
+Client 必须在 5 分钟内响应 `session/request_permission`。超时会按 fail-closed
+处理：对应工具先更新为 failed，随后 Prompt 以 cancelled 结束。应检查 Client
+是否正确配对反向请求 ID，并确保没有把 stderr 合并进 JSONL stdout。

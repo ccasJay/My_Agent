@@ -78,7 +78,7 @@ cmake --build build --parallel 2
 ## 当前限制
 
 - Shell 命令解析和安全策略不是完整的 POSIX Shell 解析器。
-- 停止是协作式的，不会强制取消正在进行的 HTTP 请求或 Shell 子进程。
+- 停止通过 StopToken 传播；HTTP 会中止传输，Shell 会终止独立进程组。
 - 单次 Shell 输出最多保留 16 KiB，超出部分会被排空但不保存。
 - 模型响应必须兼容 `choices[0].message.content` 结构。
 - 命令在本机执行；运行项目前应检查 Prompt 和命令审核模式。

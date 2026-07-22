@@ -101,8 +101,10 @@ Console 模式执行一次任务后退出。标准输入是交互式终端时，
 它的 stdout 只包含单行 JSON-RPC，日志写 stderr。不要把两个流合并。完整
 能力、Client 配置和协议示例见 [ACP 接入指南](acp-integration.md)。
 
-首次启动会为规范化后的当前工作区创建 Session，并把数据写入平台默认
-目录。可用 `SWE_AGENT_DATA_DIR` 改变数据库目录，详见
+`agent` 的 Console/TUI 启动后会为规范化的当前工作区创建或恢复 Session。
+`agent-acp` 启动时只打开数据库，收到 Client 的 `session/new` 后才创建
+Session。数据默认写入平台数据目录，可用 `SWE_AGENT_DATA_DIR` 改变数据库
+目录，详见
 [配置参考](configuration.md)。
 
 ## 安装

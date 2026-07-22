@@ -165,9 +165,9 @@ sequenceDiagram
     W-->>UI: PostEvent 刷新通知
 ```
 
-停止使用共享原子标志实现的 `StopSource` / `StopToken`。它是协作式的：
-循环只在预设检查点观察停止请求，不会强制取消正在阻塞的 HTTP 请求或
-Shell 子进程。
+停止使用共享原子标志实现的 `StopSource` / `StopToken`。Agent Loop 在预设
+检查点观察请求，并把 Token 传入生产 HTTP 与 Shell 实现：HTTP 通过 libcurl
+进度回调中止传输，Shell 通过信号终止独立子进程组。
 
 ## ACP 进程
 
@@ -176,8 +176,8 @@ FTXUI，也不改变现有 Console/TUI。协议线程读取请求并处理 Sessi
 `AcpPromptController` 用单个 Worker 执行耗时 Prompt，使协议线程仍可接收
 cancel 和反向权限请求的响应。
 
-`AcpSessionRegistry` 可同时持有多个 `AgentSession`，但 Prompt Controller
-在整个进程只允许一个运行任务。每个任务注入绑定 Session workspace 的
+`AcpSessionRegistry` 默认最多同时持有 64 个 `AgentSession`，但 Prompt
+Controller 在整个进程只允许一个运行任务。每个任务注入绑定 Session workspace 的
 Shell Executor，并把 AgentEvent 转换为 ACP 消息/工具更新。具体映射见
 [ACP 接入指南](acp-integration.md)。
 
@@ -198,7 +198,8 @@ FTXUI 类型只出现在最终应用和绘制层，不进入 `swe_agent_core`。
 ## 当前架构限制
 
 - `ModelClient` 尚未提供运行时选择多种 Provider 的注册机制。
-- HTTP 和 Shell 调用均为同步阻塞；停止只能在调用返回后生效。
+- HTTP 和 Shell API 保持同步，但生产实现会检查 StopToken 并中止底层操作；
+  旧 Provider 兼容重载仍可能要等调用返回。
 - 命令策略不是完整 Shell 解析器，不能推断所有间接执行行为。
 - TUI 日志按事件更新，但 Shell 输出只在命令结束后整体返回。
 - 配置文件位置与当前工作目录绑定，安装后不会自动发现全局配置。
