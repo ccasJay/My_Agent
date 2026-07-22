@@ -15,6 +15,8 @@ add_executable(swe_agent_tests
     ../src/cli.cpp
     ../src/tui_view.cpp
     test_shell.cpp
+    test_acp_json_rpc.cpp
+    test_acp_server.cpp
     test_command_policy.cpp
     test_command_authorization.cpp
     test_command_review.cpp
@@ -38,6 +40,7 @@ add_executable(swe_agent_tests
 target_link_libraries(swe_agent_tests
     PRIVATE
         swe_agent_core
+        swe_agent_acp_support
         swe_agent_tui_support
         Catch2::Catch2WithMain
         CLI11::CLI11
