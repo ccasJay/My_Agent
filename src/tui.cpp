@@ -5,7 +5,8 @@
 #include "tui/log_viewport.hpp"
 #include "tui/prompt_history.hpp"
 #include "tui/run_status.hpp"
-#include "tui/session_command.hpp"
+#include "tui/slash_context.hpp"
+#include "tui/slash_registry.hpp"
 #include "tui/tui_session.hpp"
 #include "tui/tui_state.hpp"
 #include "tui/tui_view.hpp"
@@ -25,7 +26,6 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -99,6 +99,10 @@ int run(
     };
     (void)session.load_session(session_manager.active_snapshot());
 
+    // 斜杠元命令注册表：仅 UI 线程使用，不进入 Agent Loop。
+    SlashRegistry slash_commands;
+    register_builtin_slash_commands(slash_commands);
+
     // 由 FTXUI Input 统一处理 UTF-8 编辑、光标位置和水平跟随。
     int input_cursor = 0;
     constexpr std::string_view kPromptPlaceholder =
@@ -118,54 +122,17 @@ int run(
 
     auto start_task = [&] {
         const std::string task = task_input;
-        const SessionCommand command = parse_session_command(task);
-        if (command.kind != SessionCommandKind::None) {
-            try {
-                switch (command.kind) {
-                case SessionCommandKind::New:
-                    (void)session_manager.new_session();
-                    (void)session.load_session(
-                        session_manager.active_snapshot());
+        SlashContext slash_ctx{
+            .sessions = session_manager,
+            .ui = session,
+            .on_session_view_changed =
+                [&] {
                     cached_log_revision =
                         std::numeric_limits<std::size_t>::max();
-                    break;
-                case SessionCommandKind::List: {
-                    std::ostringstream content;
-                    const auto sessions = session_manager.list_sessions();
-                    for (const auto& summary : sessions) {
-                        const std::string title = summary.title.empty()
-                            ? "(untitled)"
-                            : summary.title;
-                        content << summary.id.substr(
-                                       0,
-                                       std::min<std::size_t>(8, summary.id.size()))
-                                << "  " << title << "  ["
-                                << summary.model_name << "]\n";
-                    }
-                    session.append_notice(
-                        "Sessions",
-                        content.str().empty()
-                            ? "No sessions in this workspace."
-                            : content.str());
-                    break;
-                }
-                case SessionCommandKind::Resume:
-                    (void)session_manager.resume(command.argument);
-                    (void)session.load_session(
-                        session_manager.active_snapshot());
-                    cached_log_revision =
-                        std::numeric_limits<std::size_t>::max();
-                    break;
-                case SessionCommandKind::Invalid:
-                    session.append_notice("Session command", command.error, true);
-                    break;
-                case SessionCommandKind::None:
-                    break;
-                }
-            } catch (const std::exception& error) {
-                session.append_notice("Session error", error.what(), true);
-            }
-
+                },
+        };
+        if (slash_commands.dispatch(slash_ctx, task) ==
+            SlashDispatchStatus::Handled) {
             task_input.clear();
             input_cursor = 0;
             idle_ctrl_c_armed = false;
