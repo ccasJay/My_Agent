@@ -78,6 +78,7 @@ add_library(swe_agent_tui_support
     src/slash_builtins.cpp
     src/slash_context.cpp
     src/slash_registry.cpp
+    src/slash_suggest.cpp
     src/tui_session.cpp
     src/tui_state.cpp
 )
