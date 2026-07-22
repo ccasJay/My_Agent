@@ -4,8 +4,8 @@ My_Agent 是一个使用 C++20 编写的本地软件工程 Agent。它通过 Ope
 兼容接口调用模型，按照约定解析模型回复中的 `RUN:` 命令，在本地 Shell
 执行命令，并把执行结果作为下一轮上下文返回给模型。
 
-项目同时提供全屏 TUI 和一次性 Console 模式，二者共用 Agent Loop、命令
-授权和 Session 持久化实现。
+项目同时提供全屏 TUI、一次性 Console 模式和 ACP v1 stdio 子进程，三者
+共用 Agent Loop、命令授权和 Session 持久化实现。
 
 ## 核心能力
 
@@ -14,6 +14,7 @@ My_Agent 是一个使用 C++20 编写的本地软件工程 Agent。它通过 Ope
 - 在执行前对命令进行策略分类和人工审核。
 - 持久化会话，并按当前工作区新建、继续或恢复会话。
 - 默认提供 FTXUI 交互界面，也可执行单个 Console 任务。
+- 通过 `agent-acp` 接入支持 ACP v1 的编辑器或其他 Client。
 - 通过事件和运行结果解耦核心循环与界面展示。
 
 ## 快速开始
@@ -54,9 +55,13 @@ cmake --build build --parallel 2
 
 # 为本次运行覆盖模型名
 ./build/agent -m "model-name"
+
+# 由 ACP Client 启动的 stdio Agent 进程
+./build/agent-acp --env-file .env --agent-config config/agent.yaml
 ```
 
-命令行参数和配置优先级见[配置参考](docs/configuration.md)。
+命令行参数和配置优先级见[配置参考](docs/configuration.md)，协议接入方式见
+[ACP 接入指南](docs/acp-integration.md)。
 
 ## 文档导航
 
@@ -67,7 +72,8 @@ cmake --build build --parallel 2
 3. [Agent Loop](docs/agent-loop.md)：理解模型与 Shell 的循环协议。
 4. [模块与源码导读](docs/modules.md)：定位核心类型和关键函数。
 5. [Session 与 TUI](docs/session-and-tui.md)：理解持久化和交互界面。
-6. [故障排查](docs/troubleshooting.md)：定位常见运行问题。
+6. [ACP 接入指南](docs/acp-integration.md)：把 Agent 接入 ACP Client。
+7. [故障排查](docs/troubleshooting.md)：定位常见运行问题。
 
 ## 当前限制
 
@@ -76,6 +82,7 @@ cmake --build build --parallel 2
 - 单次 Shell 输出最多保留 16 KiB，超出部分会被排空但不保存。
 - 模型响应必须兼容 `choices[0].message.content` 结构。
 - 命令在本机执行；运行项目前应检查 Prompt 和命令审核模式。
+- ACP 首版不支持 MCP、富媒体、Client FS/Terminal、认证和配置选项。
 
 ## 测试
 

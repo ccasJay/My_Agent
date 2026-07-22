@@ -17,13 +17,16 @@ using Json = nlohmann::json;
 
 /** @brief JSON-RPC 读取结果。 */
 struct JsonRpcReadResult {
+    /** @brief 单行读取的解析状态。 */
     enum class Status {
         Message,
         ParseError,
         EndOfStream,
     };
 
+    /** @brief 本次读取状态。 */
     Status status{Status::EndOfStream};
+    /** @brief 解析成功时得到的 JSON 值。 */
     Json message;
 };
 
@@ -34,6 +37,7 @@ struct JsonRpcReadResult {
  */
 class JsonRpcConnection {
 public:
+    /** @brief 在指定输入输出流上建立 JSONL 连接。 */
     JsonRpcConnection(std::istream& input, std::ostream& output);
 
     /** @brief 读取并解析下一条物理行。 */

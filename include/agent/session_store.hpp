@@ -80,20 +80,27 @@ struct SessionSummary {
 
 /** @brief Session 列表的稳定键集游标。 */
 struct SessionListCursor {
+    /** @brief 游标指向记录的更新时间。 */
     std::int64_t updated_at_ms{0};
+    /** @brief 在时间相同时用于稳定排序的 Session ID。 */
     SessionId id;
 };
 
 /** @brief Session 分页查询条件。 */
 struct SessionListQuery {
+    /** @brief 可选的规范化工作区过滤条件。 */
     std::optional<std::string> workspace;
+    /** @brief 只返回严格早于该键集游标的记录。 */
     std::optional<SessionListCursor> before;
+    /** @brief 本页最多返回的记录数。 */
     std::size_t limit{20};
 };
 
 /** @brief Session 分页查询结果。 */
 struct SessionListPage {
+    /** @brief 当前页的 Session 摘要。 */
     std::vector<SessionSummary> sessions;
+    /** @brief 仍有下一页时返回的继续查询游标。 */
     std::optional<SessionListCursor> next_cursor;
 };
 

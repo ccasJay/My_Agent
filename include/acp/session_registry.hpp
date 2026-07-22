@@ -23,13 +23,17 @@ public:
 
 /** @brief 已加载到当前 ACP 进程的 Session。 */
 struct AcpActiveSession {
+    /** @brief 可提交 Prompt 的核心 Session。 */
     std::shared_ptr<agent::AgentSession> session;
+    /** @brief 已校验并规范化的工作目录。 */
     std::string workspace;
 };
 
 /** @brief load 返回的活动 Session 与回放快照。 */
 struct AcpLoadedSession {
+    /** @brief 注册到当前连接的活动 Session。 */
     AcpActiveSession active;
+    /** @brief 用于向 Client 回放可见历史的持久化快照。 */
     agent::SessionSnapshot snapshot;
 };
 
@@ -40,6 +44,7 @@ struct AcpLoadedSession {
  */
 class AcpSessionRegistry {
 public:
+    /** @brief 使用共享运行时依赖构造 Session Registry。 */
     AcpSessionRegistry(
         model::IProvider& provider,
         config::AgentConfig agent_config,

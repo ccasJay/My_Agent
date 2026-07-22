@@ -38,7 +38,7 @@ struct AgentEvent {
     std::string command;
     // 仅命令拒绝事件使用；其它事件保持为空。
     std::string rule_id;
-    // 仅 CommandFinished 使用；true 表示子进程成功退出。
+    /** @brief 仅 CommandFinished 使用；true 表示子进程成功退出。 */
     std::optional<bool> command_succeeded;
 };
 
@@ -76,7 +76,7 @@ struct AgentRunOptions {
     StopToken stop_token;
     // 命令授权器。
     CommandAuthorizer authorizer;
-    // 可选 Shell 执行器；未提供时使用当前进程工作目录。
+    /** @brief 可选 Shell 执行器；未提供时使用当前进程工作目录。 */
     ShellExecutor shell_executor;
 };
 }  // namespace swe_agent::agent

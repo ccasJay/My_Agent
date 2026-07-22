@@ -23,7 +23,10 @@ namespace swe_agent::acp {
  */
 class AcpPromptController {
 public:
+    /** @brief 构造绑定到指定 JSON-RPC 连接的 Prompt 控制器。 */
     explicit AcpPromptController(JsonRpcConnection& connection);
+
+    /** @brief 请求停止并回收仍在运行的 Worker。 */
     ~AcpPromptController();
 
     AcpPromptController(const AcpPromptController&) = delete;

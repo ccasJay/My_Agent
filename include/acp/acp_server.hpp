@@ -14,9 +14,13 @@ namespace swe_agent::acp {
 
 /** @brief ACP Server 运行所需的核心依赖。 */
 struct AcpServerContext {
+    /** @brief 执行模型查询的 Provider。 */
     model::IProvider& provider;
+    /** @brief 新建或恢复 Session 使用的 Agent 配置。 */
     config::AgentConfig agent_config;
+    /** @brief ACP 与现有前端共享的持久化存储。 */
     agent::ISessionStore& session_store;
+    /** @brief 本进程实际使用的模型名。 */
     std::string model_name;
 };
 
@@ -27,6 +31,7 @@ struct AcpServerContext {
  */
 class AcpServer {
 public:
+    /** @brief 使用给定连接和运行时依赖构造协议服务。 */
     AcpServer(JsonRpcConnection& connection, AcpServerContext context);
 
     /** @brief 运行协议循环直到输入流关闭。 */

@@ -15,6 +15,11 @@ flowchart TD
     CLI --> MODEL[ModelClient]
     CLI --> STORE[SqliteSessionStore]
     CLI --> MANAGER[SessionManager]
+    ACPCLI[agent-acp / JSONL stdio] --> ACPSERVER[AcpServer]
+    ACPSERVER --> ACPSESS[AcpSessionRegistry]
+    ACPSERVER --> ACPPROMPT[AcpPromptController]
+    ACPSESS --> STORE
+    ACPPROMPT --> SESSION
     CONFIG --> MANAGER
     MODEL --> MANAGER
     STORE --> MANAGER
@@ -28,7 +33,7 @@ flowchart TD
     LOOP --> AUTH[CommandAuthorization]
     AUTH --> POLICY[CommandPolicy]
     AUTH --> REVIEW[Console 或 TUI Reviewer]
-    AUTH --> SHELL[Shell / popen]
+    AUTH --> SHELL[Shell 子进程]
 
     LOOP --> EVENTS[AgentEvent]
     LOOP --> RESULT[AgentRunResult]
@@ -108,8 +113,9 @@ CommandRequest
 安全拒绝。TUI 还可在 Review 模式下让策略已经允许的命令也经过人工确认。
 具体规则见 [Agent Loop：命令授权](agent-loop.md#命令授权)。
 
-Shell 使用 `popen()`，由系统 Shell 执行命令并合并 stdout/stderr。核心层不
-提供容器或进程级沙箱，安全边界来自策略、审核和运行程序的操作系统权限。
+Shell 使用 `fork()`、管道和 `/bin/sh -c` 执行命令并合并 stdout/stderr。
+可选工作目录只在子进程内通过 `chdir()` 切换。核心层不提供容器或进程级
+沙箱，安全边界来自策略、审核和运行程序的操作系统权限。
 
 ## 事件与最终结果
 
@@ -163,6 +169,18 @@ sequenceDiagram
 循环只在预设检查点观察停止请求，不会强制取消正在阻塞的 HTTP 请求或
 Shell 子进程。
 
+## ACP 进程
+
+`agent-acp` 是独立 composition root，通过 JSONL stdio 实现 ACP v1，不依赖
+FTXUI，也不改变现有 Console/TUI。协议线程读取请求并处理 Session 生命周期；
+`AcpPromptController` 用单个 Worker 执行耗时 Prompt，使协议线程仍可接收
+cancel 和反向权限请求的响应。
+
+`AcpSessionRegistry` 可同时持有多个 `AgentSession`，但 Prompt Controller
+在整个进程只允许一个运行任务。每个任务注入绑定 Session workspace 的
+Shell Executor，并把 AgentEvent 转换为 ACP 消息/工具更新。具体映射见
+[ACP 接入指南](acp-integration.md)。
+
 ## CMake 目标与依赖方向
 
 | 目标 | 主要内容 | 关键依赖 |
@@ -170,6 +188,8 @@ Shell 子进程。
 | `swe_agent_core` | 配置、HTTP、模型、Agent、Session、Shell、命令授权 | libcurl、yaml-cpp、SQLite3、nlohmann/json |
 | `swe_agent_tui_support` | TUI 状态、Worker、日志块、视口、输入历史、动画 | Threads |
 | `swe-agent` | CLI、main、FTXUI 事件循环和绘制 | 两个内部库、CLI11、FTXUI、Threads |
+| `swe_agent_acp_support` | JSON-RPC、ACP 状态机、Session Registry、Prompt Worker | core、nlohmann/json、Threads |
+| `swe-agent-acp` | ACP stdio 进程入口与参数解析 | ACP 支持库、CLI11 |
 | `swe_agent_tests` | 聚合单元测试 | Catch2 及生产目标 |
 
 FTXUI 类型只出现在最终应用和绘制层，不进入 `swe_agent_core`。TUI 支持库

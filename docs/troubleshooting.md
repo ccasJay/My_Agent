@@ -154,7 +154,7 @@ Observation 末尾出现 `[exit=N]`、`[signal=N]`、`[status=unknown]`、
 
 ### 原因
 
-子进程非零退出、被信号终止、`popen()`/`pclose()` 失败，或合并输出超过
+子进程非零退出、被信号终止、pipe/fork/read/wait 失败，或合并输出超过
 16 KiB。
 
 ### 检查
@@ -237,3 +237,34 @@ TUI 会保持 busy 直到旧 Worker 真正返回。
 
 等待当前调用返回。后续任务避免无界阻塞命令；若需要强制终止，只能在
 Agent 外部管理整个进程，当前程序不会主动杀死子进程。
+
+## ACP Client 无法解析输出
+
+### 现象
+
+Client 报 JSON 解析失败、请求无响应，或把普通日志当作协议对象。
+
+### 原因
+
+- Client 没有按换行分隔 JSON-RPC；
+- 启动脚本把 stderr 重定向或合并到了 stdout；
+- 直接在交互终端启动 `agent-acp`，却没有提供 JSONL 请求。
+
+### 检查与处理
+
+确认 Client 分别捕获 stdout/stderr，且每次向 stdin 写入一个完整 JSON 对象
+和换行。stdout 的每个非空物理行都应能独立解析。协议示例见
+[ACP 接入指南](acp-integration.md#jsonl-交互示例)。
+
+## ACP Session 无法恢复
+
+### 现象
+
+load/resume 返回 Invalid params、Session not found 或 cwd mismatch。
+
+### 原因与处理
+
+ACP 要求传入存在的绝对 `cwd`，且恢复目录必须等于创建时规范化后的
+workspace；`mcpServers` 还必须是空数组。先用 `session/list` 按 cwd 查询，
+再原样使用返回的 `sessionId`。`session/close` 不会删除历史，关闭后仍可
+重新 load/resume。

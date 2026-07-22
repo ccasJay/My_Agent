@@ -11,7 +11,7 @@
 - yaml-cpp；
 - SQLite3；
 - nlohmann/json；
-- POSIX Shell 与 `popen()`、`pclose()` 等接口。
+- POSIX Shell 与 `fork()`、`pipe()`、`waitpid()` 等接口。
 
 CLI11 v2.4.2 和 FTXUI v7.0.1 由 CMake `FetchContent` 获取。首次配置时若
 本地尚无依赖源码，需要可访问对应的 Git 仓库。
@@ -51,8 +51,9 @@ cmake -S . -B build \
 cmake --build build --parallel 2
 ```
 
-构建产物是 `build/agent`。主要 CMake 目标包括核心库、TUI 支持库、最终
-可执行文件和一个 Catch2 测试可执行文件。
+主要构建产物是交互式前端 `build/agent` 和 stdio 协议进程
+`build/agent-acp`。主要 CMake 目标包括核心库、TUI/ACP 支持库、两个可执行
+文件和一个 Catch2 测试可执行文件。
 
 ## 运行测试
 
@@ -87,13 +88,27 @@ Session 与 TUI 操作见[Session 与 TUI](session-and-tui.md)。
 Console 模式执行一次任务后退出。标准输入是交互式终端时，需要人工审核的
 命令会显示审批提示；非交互式输入无法完成审核，命令会被安全拒绝。
 
+### ACP 模式
+
+`agent-acp` 应由支持 ACP v1 的 Client 作为 stdio 子进程启动：
+
+```bash
+./build/agent-acp \
+  --env-file .env \
+  --agent-config config/agent.yaml
+```
+
+它的 stdout 只包含单行 JSON-RPC，日志写 stderr。不要把两个流合并。完整
+能力、Client 配置和协议示例见 [ACP 接入指南](acp-integration.md)。
+
 首次启动会为规范化后的当前工作区创建 Session，并把数据写入平台默认
 目录。可用 `SWE_AGENT_DATA_DIR` 改变数据库目录，详见
 [配置参考](configuration.md)。
 
 ## 安装
 
-仓库脚本会以 Debug 配置重新构建，并安装到 `$HOME/.local/bin/agent`：
+仓库脚本会以 Debug 配置重新构建，并安装到 `$HOME/.local/bin/agent` 和
+`$HOME/.local/bin/agent-acp`：
 
 ```bash
 ./scripts/rebuild_install.sh
