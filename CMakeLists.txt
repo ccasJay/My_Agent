@@ -75,7 +75,10 @@ add_library(swe_agent_tui_support
     src/log_viewport.cpp
     src/prompt_history.cpp
     src/run_status.cpp
-    src/session_command.cpp
+    src/slash_builtins.cpp
+    src/slash_context.cpp
+    src/slash_registry.cpp
+    src/slash_suggest.cpp
     src/tui_session.cpp
     src/tui_state.cpp
 )
@@ -83,7 +86,9 @@ target_include_directories(swe_agent_tui_support
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(swe_agent_tui_support
-    PUBLIC Threads::Threads
+    PUBLIC
+        swe_agent_core
+        Threads::Threads
 )
 target_compile_options(swe_agent_tui_support PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>

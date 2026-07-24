@@ -5,7 +5,9 @@
 #include "tui/log_viewport.hpp"
 #include "tui/prompt_history.hpp"
 #include "tui/run_status.hpp"
-#include "tui/session_command.hpp"
+#include "tui/slash_context.hpp"
+#include "tui/slash_registry.hpp"
+#include "tui/slash_suggest.hpp"
 #include "tui/tui_session.hpp"
 #include "tui/tui_state.hpp"
 #include "tui/tui_view.hpp"
@@ -25,7 +27,6 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -99,8 +100,63 @@ int run(
     };
     (void)session.load_session(session_manager.active_snapshot());
 
+    // 斜杠元命令注册表：仅 UI 线程使用，不进入 Agent Loop。
+    SlashRegistry slash_commands;
+    register_builtin_slash_commands(slash_commands);
+
     // 由 FTXUI Input 统一处理 UTF-8 编辑、光标位置和水平跟随。
     int input_cursor = 0;
+
+    // 斜杠建议弹层状态（UI 线程）；选中补全不执行命令。
+    SlashSuggestResult slash_suggest;
+    std::size_t slash_suggest_selected = 0;
+    std::string slash_suggest_selected_name;
+
+    auto close_slash_suggest = [&] {
+        slash_suggest = {};
+        slash_suggest_selected = 0;
+        slash_suggest_selected_name.clear();
+    };
+
+    auto refresh_slash_suggest = [&] {
+        const SlashSuggestResult next = evaluate_slash_suggest(
+            task_input,
+            input_cursor,
+            slash_commands.list());
+        if (!next.open) {
+            close_slash_suggest();
+            return;
+        }
+        // 重新过滤后尽量保留同名选中项。
+        std::size_t next_selected = 0;
+        if (!slash_suggest_selected_name.empty()) {
+            for (std::size_t i = 0; i < next.matches.size(); ++i) {
+                if (next.matches[i].name == slash_suggest_selected_name) {
+                    next_selected = i;
+                    break;
+                }
+            }
+        }
+        slash_suggest = next;
+        slash_suggest_selected = next_selected;
+        slash_suggest_selected_name =
+            slash_suggest.matches[slash_suggest_selected].name;
+    };
+
+    auto apply_selected_slash_suggest = [&] {
+        if (!slash_suggest.open ||
+            slash_suggest_selected >= slash_suggest.matches.size()) {
+            return;
+        }
+        task_input = apply_slash_completion(
+            task_input,
+            slash_suggest,
+            slash_suggest_selected);
+        input_cursor = completion_cursor_after(task_input);
+        close_slash_suggest();
+        prompt_history.cancel_navigation();
+    };
+
     constexpr std::string_view kPromptPlaceholder =
         "Describe a task and press Enter";
     InputOption input_option;
@@ -114,58 +170,25 @@ int run(
         }
         return state.element;
     };
+    input_option.on_change = [&] {
+        refresh_slash_suggest();
+    };
     auto input = Input(&task_input, input_option);
 
     auto start_task = [&] {
+        close_slash_suggest();
         const std::string task = task_input;
-        const SessionCommand command = parse_session_command(task);
-        if (command.kind != SessionCommandKind::None) {
-            try {
-                switch (command.kind) {
-                case SessionCommandKind::New:
-                    (void)session_manager.new_session();
-                    (void)session.load_session(
-                        session_manager.active_snapshot());
+        SlashContext slash_ctx{
+            .sessions = session_manager,
+            .ui = session,
+            .on_session_view_changed =
+                [&] {
                     cached_log_revision =
                         std::numeric_limits<std::size_t>::max();
-                    break;
-                case SessionCommandKind::List: {
-                    std::ostringstream content;
-                    const auto sessions = session_manager.list_sessions();
-                    for (const auto& summary : sessions) {
-                        const std::string title = summary.title.empty()
-                            ? "(untitled)"
-                            : summary.title;
-                        content << summary.id.substr(
-                                       0,
-                                       std::min<std::size_t>(8, summary.id.size()))
-                                << "  " << title << "  ["
-                                << summary.model_name << "]\n";
-                    }
-                    session.append_notice(
-                        "Sessions",
-                        content.str().empty()
-                            ? "No sessions in this workspace."
-                            : content.str());
-                    break;
-                }
-                case SessionCommandKind::Resume:
-                    (void)session_manager.resume(command.argument);
-                    (void)session.load_session(
-                        session_manager.active_snapshot());
-                    cached_log_revision =
-                        std::numeric_limits<std::size_t>::max();
-                    break;
-                case SessionCommandKind::Invalid:
-                    session.append_notice("Session command", command.error, true);
-                    break;
-                case SessionCommandKind::None:
-                    break;
-                }
-            } catch (const std::exception& error) {
-                session.append_notice("Session error", error.what(), true);
-            }
-
+                },
+        };
+        if (slash_commands.dispatch(slash_ctx, task) ==
+            SlashDispatchStatus::Handled) {
             task_input.clear();
             input_cursor = 0;
             idle_ctrl_c_armed = false;
@@ -283,20 +306,37 @@ int run(
             log_panel_dirty = false;
         }
 
-        const Element input_panel = snapshot.awaiting_approval
-            ? render_approval_panel(snapshot, cached_terminal_width)
-            : snapshot.running
-            ? render_run_panel(
-                  snapshot,
-                  run_status_animation,
-                  render_now,
-                  animation_frame.load(),
-                  cached_terminal_width)
-            : render_prompt_panel(
-                  active_pane,
-                  input,
-                  task_input,
-                  kPromptPlaceholder);
+        Element input_panel;
+        if (snapshot.awaiting_approval) {
+            close_slash_suggest();
+            input_panel =
+                render_approval_panel(snapshot, cached_terminal_width);
+        } else if (snapshot.running) {
+            close_slash_suggest();
+            input_panel = render_run_panel(
+                snapshot,
+                run_status_animation,
+                render_now,
+                animation_frame.load(),
+                cached_terminal_width);
+        } else {
+            Element prompt = render_prompt_panel(
+                active_pane,
+                input,
+                task_input,
+                kPromptPlaceholder);
+            if (slash_suggest.open && active_pane == ActivePane::Prompt) {
+                input_panel = vbox({
+                    render_slash_suggest_panel(
+                        slash_suggest.matches,
+                        slash_suggest_selected,
+                        cached_terminal_width),
+                    std::move(prompt),
+                });
+            } else {
+                input_panel = std::move(prompt);
+            }
+        }
 
         return render_tui_layout(
             render_header(snapshot, cached_terminal_width),
@@ -490,6 +530,38 @@ int run(
         }
 
         const bool running = session.running();
+        const bool suggest_open =
+            slash_suggest.open && !running &&
+            active_pane == ActivePane::Prompt &&
+            !session.awaiting_command_approval();
+
+        // 建议弹层打开时抢占导航键：补全而非提交/切面板/历史。
+        if (suggest_open) {
+            if (event == Event::ArrowDown) {
+                if (slash_suggest_selected + 1 < slash_suggest.matches.size()) {
+                    ++slash_suggest_selected;
+                    slash_suggest_selected_name =
+                        slash_suggest.matches[slash_suggest_selected].name;
+                }
+                return true;
+            }
+            if (event == Event::ArrowUp) {
+                if (slash_suggest_selected > 0) {
+                    --slash_suggest_selected;
+                    slash_suggest_selected_name =
+                        slash_suggest.matches[slash_suggest_selected].name;
+                }
+                return true;
+            }
+            if (event == Event::Tab || event == Event::Return) {
+                apply_selected_slash_suggest();
+                return true;
+            }
+            if (event == Event::Escape) {
+                close_slash_suggest();
+                return true;
+            }
+        }
 
         if (!running && event == Event::TabReverse) {
             (void)session.toggle_command_mode();
@@ -499,6 +571,7 @@ int run(
         if (!running && event == Event::Tab) {
             if (active_pane == ActivePane::Prompt && !log_blocks.empty()) {
                 active_pane = ActivePane::Scrollback;
+                close_slash_suggest();
                 sync_selected_block_to_viewport();
             } else {
                 active_pane = ActivePane::Prompt;
@@ -549,6 +622,7 @@ int run(
             } else {
                 task_input.clear();
                 input_cursor = 0;
+                close_slash_suggest();
                 prompt_history.cancel_navigation();
                 idle_ctrl_c_armed = true;
             }
@@ -565,6 +639,7 @@ int run(
             } else {
                 task_input.clear();
                 input_cursor = 0;
+                close_slash_suggest();
                 prompt_history.cancel_navigation();
             }
             return true;
@@ -576,6 +651,7 @@ int run(
                 return false;
             }
             input_cursor = static_cast<int>(task_input.size());
+            close_slash_suggest();
             return true;
         }
 
@@ -585,6 +661,7 @@ int run(
                 return false;
             }
             input_cursor = static_cast<int>(task_input.size());
+            close_slash_suggest();
             return true;
         }
 
